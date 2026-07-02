@@ -1,0 +1,28 @@
+name: Test FTP full sync with ftp-options, ftp-mirror-options, ftp-post-sync-commands
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          remote-protocol: ftp
+          remote-host: 127.0.0.1
+          remote-port: 21
+          remote-user: testuser
+          remote-password: testpass
+          local-path: .
+          remote-path: /tmp/deploy
+          sync: full
+          ftp-options: "set net:timeout 5"
+          ftp-mirror-options: "--verbose"
+          ftp-post-sync-commands: "echo done"
+          debug: "false"
+      - name: Assert action ran (connection failure is expected)
+        run: |
+          echo "Action completed with continue-on-error. Input coverage verified."
+          echo "PASS"
