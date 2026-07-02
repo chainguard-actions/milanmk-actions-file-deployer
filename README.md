@@ -8,6 +8,7 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 
 | Version | Tag | Upstream commit |
 |---------|-----|-----------------|
+| 1.14 | [`1.14`](https://github.com/chainguard-actions/milanmk-actions-file-deployer/tree/1.14) | [`c1baf76`](https://github.com/milanmk/actions-file-deployer/commit/c1baf767551098897cadabc77c520a9be30dc916) |
 | 1.18 | [`1.18`](https://github.com/chainguard-actions/milanmk-actions-file-deployer/tree/1.18) | [`b204fec`](https://github.com/milanmk/actions-file-deployer/commit/b204fec5b826c391b116c40b789df470a4fb6870) |
 
 ## Privacy
