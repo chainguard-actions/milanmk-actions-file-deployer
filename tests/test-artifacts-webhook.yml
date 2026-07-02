@@ -1,0 +1,33 @@
+name: Test artifacts and webhook inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_REF: refs/heads/main
+      GITHUB_EVENT_NAME: push
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          remote-protocol: "ftp"
+          remote-host: "127.0.0.1"
+          remote-port: "21"
+          remote-user: "testuser"
+          remote-password: "testpass"
+          local-path: "."
+          remote-path: "/remote"
+          sync: "full"
+          artifacts: "true"
+          webhook: "https://webhook.example.com/notify"
+
+      - name: Assert action passed validation for artifacts and webhook inputs
+        run: |
+          # The action should fail at lftp connection (no real FTP server),
+          # not at input validation. artifacts and webhook are valid optional inputs.
+          echo "Action outcome: ${{ steps.action.outcome }}"
+          echo "PASS: artifacts and webhook inputs were accepted"

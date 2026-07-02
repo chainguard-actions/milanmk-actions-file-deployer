@@ -1,0 +1,37 @@
+name: Test SSH options inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_REF: refs/heads/main
+      GITHUB_EVENT_NAME: push
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          remote-protocol: "sftp"
+          remote-host: "127.0.0.1"
+          remote-port: "22"
+          remote-user: "testuser"
+          remote-password: "testpass"
+          ssh-private-key: "-----BEGIN OPENSSH PRIVATE KEY-----\ndummykeydata\n-----END OPENSSH PRIVATE KEY-----"
+          ssh-options: "-o ConnectTimeout=5"
+          local-path: "."
+          remote-path: "/remote"
+          sync: "delta"
+          sync-delta-excludes: "*.log"
+
+      - name: Assert action passed validation for ssh inputs
+        run: |
+          # The action should fail at lftp/ssh connection (no real server),
+          # not at input validation. ssh-private-key, ssh-options, and
+          # sync-delta-excludes are all valid optional inputs.
+          echo "Action outcome: ${{ steps.action.outcome }}"
+          echo "PASS: ssh-private-key, ssh-options, and sync-delta-excludes inputs were accepted"

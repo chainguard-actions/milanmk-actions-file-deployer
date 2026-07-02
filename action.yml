@@ -1,0 +1,482 @@
+name: "FTP/SFTP file deployer"
+description: "Fast and customizable deployment with parallel connections and proxy support. Deploy only changed files or do full sync."
+branding:
+  icon: "upload"
+  color: "black"
+inputs:
+  remote-protocol:
+    description: "Remote file transfer protocol (ftp, sftp)"
+    required: true
+    default: "sftp"
+  remote-host:
+    description: "Remote host"
+    required: true
+  remote-port:
+    description: "Remote port"
+    required: true
+    default: 22
+  remote-user:
+    description: "FTP/SSH username"
+    required: true
+  remote-password:
+    description: "FTP/SSH password"
+    required: false
+    default: ""
+  ssh-private-key:
+    description: "SSH private key of user"
+    required: false
+  proxy:
+    description: "Enable proxy for FTP connection (true, false)"
+    required: true
+    default: false
+  proxy-host:
+    description: "Proxy host"
+    required: false
+  proxy-port:
+    description: "Proxy port"
+    required: false
+    default: 22
+  proxy-forwarding-port:
+    description: "Proxy forwarding port"
+    required: false
+    default: 1080
+  proxy-user:
+    description: "Proxy username"
+    required: false
+  proxy-private-key:
+    description: "Proxy SSH private key of user"
+    required: false
+  local-path:
+    description: "Local path to repository"
+    required: true
+    default: .
+  remote-path:
+    description: "Remote path on host"
+    required: true
+    default: .
+  sync:
+    description: "File synchronization (delta, full)"
+    required: true
+    default: "delta"
+  sync-delta-excludes:
+    description: "Files to exclude from delta sync"
+    required: false
+  ssh-options:
+    description: "Additional command arguments for SSH client"
+    required: false
+  ftp-options:
+    description: "Additional command arguments for FTP client (lftp)"
+    required: false
+  ftp-mirror-options:
+    description: "Additional command arguments for mirroring (lftp)"
+    required: false
+  ftp-post-sync-commands:
+    description: "Additional ftp commands to run after synchronization (lftp)"
+    required: false
+  webhook:
+    description: "Send webhook event notifications"
+    required: false
+  artifacts:
+    description: "Upload logs to artifacts"
+    required: false
+  debug:
+    description: "Enable debug information (true, false)"
+    required: false
+runs:
+  using: "composite"
+  steps:
+    - name: Chainguard usage telemetry
+      shell: bash
+      run: |
+        # Best-effort, fails open. Mints an OIDC token when id-token: write is
+        # granted (verified record); otherwise self-reports the repository.
+        tok=""
+        if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+          tok=$(curl -sf --max-time 2 \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=actions.chainguard.dev" \
+            | sed -n 's/.*"value":"\([^"]*\)".*/\1/p') || true
+        fi
+        args=(-sf --max-time 2 -X POST -H "Content-Type: application/json")
+        [ -n "$tok" ] && args+=(-H "Authorization: Bearer $tok")
+        curl "${args[@]}" \
+          -d "{\"repository\":\"${GITHUB_REPOSITORY}\",\"action\":\"${GITHUB_ACTION_REPOSITORY}\"}" \
+          "https://actions.enforce.dev/actions/v1/record" >/dev/null 2>&1 || true
+    - name: "Deploy"
+      shell: bash
+      env:
+        INPUT_REMOTE_PROTOCOL: ${{ inputs.remote-protocol }}
+        INPUT_REMOTE_HOST: ${{ inputs.remote-host }}
+        INPUT_REMOTE_PORT: ${{ inputs.remote-port }}
+        INPUT_REMOTE_USER: ${{ inputs.remote-user }}
+        INPUT_REMOTE_PASSWORD: ${{ inputs.remote-password }}
+        INPUT_SSH_PRIVATE_KEY: ${{ inputs.ssh-private-key }}
+        INPUT_PROXY: ${{ inputs.proxy }}
+        INPUT_PROXY_HOST: ${{ inputs.proxy-host }}
+        INPUT_PROXY_PORT: ${{ inputs.proxy-port }}
+        INPUT_PROXY_FORWARDING_PORT: ${{ inputs.proxy-forwarding-port }}
+        INPUT_PROXY_USER: ${{ inputs.proxy-user }}
+        INPUT_PROXY_PRIVATE_KEY: ${{ inputs.proxy-private-key }}
+        INPUT_LOCAL_PATH: ${{ inputs.local-path }}
+        INPUT_REMOTE_PATH: ${{ inputs.remote-path }}
+        INPUT_SYNC: ${{ inputs.sync }}
+        INPUT_SYNC_DELTA_EXCLUDES: ${{ inputs.sync-delta-excludes }}
+        INPUT_SSH_OPTIONS: ${{ inputs.ssh-options }}
+        INPUT_FTP_OPTIONS: ${{ inputs.ftp-options }}
+        INPUT_FTP_MIRROR_OPTIONS: ${{ inputs.ftp-mirror-options }}
+        INPUT_FTP_POST_SYNC_COMMANDS: ${{ inputs.ftp-post-sync-commands }}
+        INPUT_WEBHOOK: ${{ inputs.webhook }}
+        INPUT_ARTIFACTS: ${{ inputs.artifacts }}
+        INPUT_DEBUG: ${{ inputs.debug }}
+        GITHUB_REPOSITORY_NAME: ${{ github.repository }}
+        GITHUB_WORKFLOW_NAME: ${{ github.workflow }}
+        GITHUB_JOB_NAME: ${{ github.job }}
+        GITHUB_RUN_ID_VAL: ${{ github.run_id }}
+        GITHUB_REF_VAL: ${{ github.ref }}
+        GITHUB_EVENT_NAME_VAL: ${{ github.event_name }}
+        GITHUB_ACTOR_VAL: ${{ github.actor }}
+        GITHUB_HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        GITHUB_SHA_VAL: ${{ github.sha }}
+        GITHUB_EVENT_PATH_VAL: ${{ github.event_path }}
+        GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+        GITHUB_EVENT_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        GITHUB_EVENT_INPUTS_SYNC: ${{ github.event.inputs.sync }}
+      run: |
+        echo "::group::Initialization"
+
+        function show_hr() {
+          printf '%.s_' {1..100} && echo ""
+        }
+
+        function send_webhook() {
+          local status="$1"
+          local post_data=$(jq --null-input \
+          --arg timestamp `date +%s` \
+          --arg status "${status}" \
+          --arg repository "${GITHUB_REPOSITORY_NAME}" \
+          --arg workflow "${GITHUB_WORKFLOW_NAME}" \
+          --arg job "${GITHUB_JOB_NAME}" \
+          --arg run_id "${GITHUB_RUN_ID_VAL}" \
+          --arg ref "${GITHUB_REF_VAL}" \
+          --arg event_name "${GITHUB_EVENT_NAME_VAL}" \
+          --arg actor "${GITHUB_ACTOR_VAL}" \
+          --arg message "${GITHUB_HEAD_COMMIT_MESSAGE}" \
+          --arg revision "${GITHUB_SHA_VAL}" \
+          '{"timestamp": $timestamp, "status": $status, "repository": $repository, "workflow": $workflow, "job": $job, "run_id": $run_id, "ref": $ref, "event_name": $event_name, "actor": $actor, "message": $message, "revision": $revision}')
+
+          curl --data "${post_data}" --header "Content-Type: application/json" --max-time 30 --show-error --silent --user-agent "GitHub Workflow" "${INPUT_WEBHOOK}"
+        }
+
+        [ "${INPUT_WEBHOOK}" != "" ] && echo "Webhook notification (start): $(send_webhook "start")"
+
+        echo "Check repository"
+
+        if [ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" != "true" ]; then
+          echo "::error::Git repository not found. Please ensure you have a checkout step before this step."
+          exit 1
+        fi
+
+        echo "Initialize inputs"
+
+        local_path_unslash=$(echo "${INPUT_LOCAL_PATH}" | sed 's:/*$::')
+        local_path_slash="${local_path_unslash}/"
+
+        remote_path_unslash=$(realpath --canonicalize-missing "${INPUT_REMOTE_PATH}")
+        remote_path_slash="${remote_path_unslash}/"
+
+        input_remote_password="${INPUT_REMOTE_PASSWORD}"
+        if [ "${INPUT_REMOTE_PASSWORD}" == "" ]; then
+          input_remote_password="$(openssl rand -hex 16)"
+        fi
+
+        input_proxy="${INPUT_PROXY}"
+
+        proxy_cmd=""
+        if [ "${input_proxy}" == "true" ]; then
+          proxy_cmd="proxychains"
+        fi
+
+        input_sync="${INPUT_SYNC}"
+        if [ "${GITHUB_EVENT_NAME_VAL}" == "workflow_dispatch" ]; then
+          input_sync="${GITHUB_EVENT_INPUTS_SYNC}"
+        fi
+
+        echo "Validate inputs"
+
+        if [ "${INPUT_REMOTE_PROTOCOL}" != "sftp" ] && [ "${INPUT_REMOTE_PROTOCOL}" != "ftp" ]; then
+          echo "::error::Invalid protocol: ${INPUT_REMOTE_PROTOCOL}. Valid protocols are 'ftp' and 'sftp'."
+          exit 1
+        fi
+
+        if [ "${input_sync}" != "delta" ] && [ "${input_sync}" != "full" ]; then
+          echo "::error::Invalid synchronization: ${input_sync}. Valid types are 'delta' and 'full'."
+          exit 1
+        fi
+
+        echo "::endgroup::"
+
+
+
+        if [ "${INPUT_DEBUG}" == "true" ]; then
+          echo "::group::Debug"
+
+          echo "Context: github.event" && cat "${GITHUB_EVENT_PATH_VAL}" && show_hr
+
+          echo "Inputs:" && echo "remote-protocol=${INPUT_REMOTE_PROTOCOL} remote-host=${INPUT_REMOTE_HOST} remote-port=${INPUT_REMOTE_PORT} remote-user=${INPUT_REMOTE_USER} local-path=${INPUT_LOCAL_PATH} remote-path=${INPUT_REMOTE_PATH} sync=${INPUT_SYNC} proxy=${INPUT_PROXY} debug=${INPUT_DEBUG}"
+
+          echo "::endgroup::"
+        fi
+
+
+
+        echo "::group::Install packages"
+
+        # Build apt-get arguments safely
+        apt_quiet_args=()
+        if [ "${INPUT_DEBUG}" != "true" ]; then
+          apt_quiet_args=("--quiet" "--quiet")
+        fi
+        # Build package list safely - proxy_cmd is either empty or "proxychains"
+        pkg_list=("lftp")
+        if [ "${proxy_cmd}" == "proxychains" ]; then
+          pkg_list+=("proxychains")
+        fi
+        sudo apt-get "${apt_quiet_args[@]}" update && sudo apt-get "${apt_quiet_args[@]}" --no-install-recommends --yes install "${pkg_list[@]}"
+
+        echo "::endgroup::"
+
+
+
+        echo "::group::Configurations"
+
+        config_ssh=~/.ssh/config
+        mkdir ~/.ssh && echo -e "ExitOnForwardFailure=yes\nStrictHostKeyChecking=no" > ${config_ssh} && chmod 600 ${config_ssh} && echo "File created: ${config_ssh}"
+        [ "${INPUT_DEBUG}" == "true" ] && cat ${config_ssh}
+        show_hr
+
+        netrc=~/.netrc
+        echo "machine ${INPUT_REMOTE_HOST} login ${INPUT_REMOTE_USER} password ${input_remote_password}" > ${netrc} && chmod 600 ${netrc} && echo "File created: ${netrc}"
+        [ "${INPUT_DEBUG}" == "true" ] && cat ${netrc}
+        show_hr
+
+        if [ "${INPUT_REMOTE_PROTOCOL}" == "sftp" ] && [ "${INPUT_SSH_PRIVATE_KEY}" != "" ]; then
+          key_ssh=~/ssh_private_key
+          echo "${INPUT_SSH_PRIVATE_KEY}" > ${key_ssh} && chmod 600 ${key_ssh} && echo "File created: ${key_ssh}" && show_hr
+        fi
+
+        if [ "${input_proxy}" == "true" ]; then
+          if [ "${INPUT_PROXY_PRIVATE_KEY}" != "" ]; then
+            key_proxy=~/proxy_private_key
+            echo "${INPUT_PROXY_PRIVATE_KEY}" > ${key_proxy} && chmod 600 ${key_proxy} && echo "File created: ${key_proxy}" && show_hr
+
+            config_proxychains=~/.proxychains/proxychains.conf
+            mkdir ~/.proxychains && echo "strict_chain
+            quiet_mode
+            tcp_read_time_out 15000
+            tcp_connect_time_out 10000
+            [ProxyList]
+            socks5 127.0.0.1 ${INPUT_PROXY_FORWARDING_PORT}" > ${config_proxychains} && echo "File created: ${config_proxychains}"
+            [ "${INPUT_DEBUG}" == "true" ] && cat ${config_proxychains}
+            show_hr
+          else
+            input_proxy="false"
+            echo "::warning::Invalid input 'proxy-private-key'. Skipping proxy connection."
+          fi
+        fi
+
+        echo "debug $([ "${INPUT_DEBUG}" == "true" ] && echo "9" || echo "false")
+        set cmd:trace $([ "${INPUT_DEBUG}" == "true" ] && echo "true" || echo "false")
+        set ftp:ssl-protect-data true
+        set ftp:sync-mode false
+        set log:enabled/xfer true
+        set log:file/xfer ~/transfer_log.txt
+        set log:show-time/xfer false
+        set mirror:overwrite true
+        set mirror:parallel-transfer-count 3
+        set mirror:set-permissions false
+        set net:max-retries 1
+        set net:persist-retries 0
+        set net:timeout 10
+        set sftp:auto-confirm true
+        set ssl:check-hostname false
+        set ssl:verify-certificate false
+        set xfer:parallel 3
+        "${INPUT_FTP_OPTIONS}"" > ~/.lftprc
+        if [ "${INPUT_REMOTE_PROTOCOL}" == "sftp" ] && [ "${INPUT_SSH_PRIVATE_KEY}" != "" ]; then
+          echo "set sftp:connect-program /usr/bin/ssh -a -x -i ~/ssh_private_key ""${INPUT_SSH_OPTIONS}" >> ~/.lftprc
+        else
+          echo "set sftp:connect-program /usr/bin/ssh -a -x ""${INPUT_SSH_OPTIONS}" >> ~/.lftprc
+        fi
+        echo "open ${INPUT_REMOTE_PROTOCOL}://${INPUT_REMOTE_USER}@${INPUT_REMOTE_HOST}:${INPUT_REMOTE_PORT}" >> ~/.lftprc
+        echo "File created: ~/.lftprc"
+        [ "${INPUT_DEBUG}" == "true" ] && cat ~/.lftprc
+
+        echo "::endgroup::"
+
+
+
+        if [ "${input_proxy}" == "true" ]; then
+          echo "::group::Setup proxy"
+
+          if [ "${INPUT_PROXY_USER}" != "" ] && [ "${INPUT_PROXY_HOST}" != "" ]; then
+            if ssh -A -D "${INPUT_PROXY_FORWARDING_PORT}" -f -N -p "${INPUT_PROXY_PORT}" -i ~/proxy_private_key "${INPUT_PROXY_USER}@${INPUT_PROXY_HOST}"; then
+              # Build proxy command prefix safely as an array
+              proxy_cmd_arr=()
+              if [ "${proxy_cmd}" == "proxychains" ]; then
+                proxy_cmd_arr=("proxychains")
+              fi
+              echo "Proxy connected" && show_hr && echo "Proxy IP address: $("${proxy_cmd_arr[@]}" curl --max-time 10 --show-error --silent "http://checkip.amazonaws.com/")"
+            else
+              echo "::error::Proxy connection failed."
+              exit 1
+            fi
+          else
+            input_proxy="false"
+            echo "::warning::Invalid input 'proxy-user', 'proxy-host'. Skipping proxy connection."
+          fi
+
+          echo "::endgroup::"
+        fi
+
+
+
+        echo "::group::Prepare files"
+
+        echo "Event: ${GITHUB_EVENT_NAME_VAL}
+        Revision: https://github.com/${GITHUB_REPOSITORY_NAME}/commit/${GITHUB_SHA_VAL}
+        Committer: ${GITHUB_ACTOR_VAL}
+        Message: ${GITHUB_HEAD_COMMIT_MESSAGE}" && show_hr
+
+        echo "${GITHUB_SHA_VAL}" > "${local_path_slash}.deploy-revision" && echo "File created: ${local_path_slash}.deploy-revision" && cat "${local_path_slash}.deploy-revision" && show_hr
+
+        if [ "${input_sync}" == "delta" ]; then
+          touch ~/files_to_upload ~/files_to_delete
+          git_depth=$(git rev-list --count --all)
+          git_previous_commit=""
+
+          if [ "${git_depth}" -gt 1 ]; then
+            if [ "${GITHUB_EVENT_NAME_VAL}" == "push" ]; then
+              git_previous_commit="${GITHUB_EVENT_BEFORE}"
+            elif [ "${GITHUB_EVENT_NAME_VAL}" == "pull_request" ]; then
+              git_previous_commit="${GITHUB_EVENT_PR_BASE_SHA}"
+            elif [ "${GITHUB_EVENT_NAME_VAL}" == "workflow_dispatch" ]; then
+              git_previous_commit=$(git rev-parse "${GITHUB_SHA_VAL}^")
+            else
+              echo "::error::Event not supported for delta synchronization: ${GITHUB_EVENT_NAME_VAL}. Supported events are 'push', 'pull_request' and 'workflow_dispatch'."
+              exit 1
+            fi
+          else
+            echo "::error::Commit history not found for delta synchronization. Please ensure you have 'fetch-depth: 0' option in checkout action. Please ignore if this is an initial commit or newly created branch."
+            exit 1
+          fi
+
+          echo "Previous Revision: https://github.com/${GITHUB_REPOSITORY_NAME}/commit/${git_previous_commit}" && show_hr
+
+          # ${proxy_cmd} lftp -c "set log:enabled/xfer false; get -O ~ \"${remote_path_slash}.deploy-revision\"; exit 0"
+          # echo -n "Remote Revision: " && [ -f ~/.deploy-revision ] && cat ~/.deploy-revision || echo ""
+          # show_hr
+
+          if git cat-file -t "${git_previous_commit}" &>/dev/null; then
+            git diff --diff-filter=ACMRT --name-only "${git_previous_commit}..${GITHUB_SHA_VAL}" -- "${local_path_unslash}" ':!/.git*' "${INPUT_SYNC_DELTA_EXCLUDES}" > ~/files_to_upload
+            git diff-tree --diff-filter=D --name-only -t "${git_previous_commit}..${GITHUB_SHA_VAL}" -- "${local_path_unslash}" ':!/.git*' "${INPUT_SYNC_DELTA_EXCLUDES}" > ~/files_to_delete
+
+            # Safely convert paths using a while-read loop instead of sed 'e' flag
+            # to avoid shell injection from attacker-controlled local_path_unslash
+            while IFS= read -r line || [ -n "$line" ]; do
+              realpath --canonicalize-missing --relative-to="$local_path_unslash" "$line"
+            done < ~/files_to_upload > ~/files_to_upload.tmp && mv ~/files_to_upload.tmp ~/files_to_upload
+            while IFS= read -r line || [ -n "$line" ]; do
+              realpath --canonicalize-missing --relative-to="$local_path_unslash" "$line"
+            done < ~/files_to_delete > ~/files_to_delete.tmp && mv ~/files_to_delete.tmp ~/files_to_delete
+
+            echo "File created: ~/files_to_upload" && cat ~/files_to_upload && show_hr
+            echo "File created: ~/files_to_delete" && cat ~/files_to_delete && show_hr
+
+            if [ "${INPUT_ARTIFACTS}" == "true" ]; then
+              echo "Copy transfer artifacts" && mkdir ~/transfer_files && rsync --verbose --files-from="$HOME/files_to_upload" "${local_path_slash}" ~/transfer_files/
+            fi
+          else
+            echo "::warning::Invalid base commit for delta synchronization: ${git_previous_commit}. Please ignore if this is an initial commit or newly created branch."
+          fi
+        fi
+
+        echo "::endgroup::"
+
+
+
+        echo "::group::Transfer files"
+
+        echo "Protocol: ${INPUT_REMOTE_PROTOCOL}
+        Synchronization: ${input_sync}
+        Local path: ${local_path_unslash}
+        Remote path: ${remote_path_unslash}"
+
+        [ "${input_sync}" == "delta" ] && echo -e "Upload files: $(wc --lines < ~/files_to_upload)\nDelete files: $(wc --lines < ~/files_to_delete)"
+
+        show_hr
+
+        touch "${local_path_slash}.deploy-running"
+
+        # Build proxy command prefix safely as an array
+        lftp_proxy_arr=()
+        if [ "${proxy_cmd}" == "proxychains" ]; then
+          lftp_proxy_arr=("proxychains")
+        fi
+
+        if [ "${input_sync}" == "full" ]; then
+          # Build lftp script via a temp file to avoid shell injection from user-supplied options
+          lftp_script=$(mktemp)
+          printf 'put -O "%s" "%s";\n' "${remote_path_unslash}" "${local_path_slash}.deploy-running" >> "${lftp_script}"
+          printf 'mirror --exclude-glob=.git*/ --max-errors=10 --reverse %s "%s" "%s";\n' \
+            "${INPUT_FTP_MIRROR_OPTIONS}" "${local_path_unslash}" "${remote_path_unslash}" >> "${lftp_script}"
+          printf 'rm -f "%s";\n' "${remote_path_slash}.deploy-running" >> "${lftp_script}"
+          if [ -n "${INPUT_FTP_POST_SYNC_COMMANDS}" ]; then
+            printf '%s\n' "${INPUT_FTP_POST_SYNC_COMMANDS}" >> "${lftp_script}"
+          fi
+          "${lftp_proxy_arr[@]}" lftp -f "${lftp_script}"
+          rm -f "${lftp_script}"
+        else
+          # Build lftp script via a temp file to avoid shell injection from user-supplied options
+          lftp_script=$(mktemp)
+          printf 'lcd "%s";\n' "${local_path_unslash}" >> "${lftp_script}"
+          printf 'put -O "%s" "%s";\n' "${remote_path_unslash}" "${local_path_slash}.deploy-running" >> "${lftp_script}"
+          printf 'mput -d -O "%s" .deploy-revision %s;\n' \
+            "${remote_path_unslash}" "$(awk '{ printf "\"%s\" ", $0 }' ~/files_to_upload)" >> "${lftp_script}"
+          printf 'rm -f "%s" %s;\n' \
+            "${remote_path_slash}.deploy-check" \
+            "$(awk -v REMOTEPATH="${remote_path_slash}" '{ printf "\"%s%s\" ", REMOTEPATH, $0 }' ~/files_to_delete)" >> "${lftp_script}"
+          printf 'rm -f "%s";\n' "${remote_path_slash}.deploy-running" >> "${lftp_script}"
+          if [ -n "${INPUT_FTP_POST_SYNC_COMMANDS}" ]; then
+            printf '%s\n' "${INPUT_FTP_POST_SYNC_COMMANDS}" >> "${lftp_script}"
+          fi
+          "${lftp_proxy_arr[@]}" lftp -f "${lftp_script}"
+          rm -f "${lftp_script}"
+        fi
+
+        [ -f ~/transfer_log.txt ] && cat ~/transfer_log.txt
+
+        echo "::endgroup::"
+
+
+
+        echo "::group::Cleanup"
+
+        [ "${input_proxy}" == "true" ] && sudo pkill ssh
+
+        rm --force --verbose ~/.netrc ~/proxy_private_key ~/ssh_private_key
+
+        [ "${INPUT_ARTIFACTS}" != "true" ] && rm --force --verbose ~/transfer_log.txt
+
+        [ "${INPUT_WEBHOOK}" != "" ] && echo "Webhook notification (finish): $(send_webhook "finish")"
+
+        echo "::endgroup::"
+
+        exit 0
+    - name: "Upload artifacts"
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: "transfer_artifacts"
+        path: |
+          ~/transfer_log.txt
+          ~/transfer_files
+        if-no-files-found: ignore
