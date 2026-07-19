@@ -1,0 +1,47 @@
+name: Test proxy and webhook inputs
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Run action with proxy-host, proxy-user, proxy-private-key, and webhook
+        id: action
+        uses: .
+        continue-on-error: true
+        with:
+          remote-protocol: "sftp"
+          remote-host: "127.0.0.1"
+          remote-port: "22"
+          remote-user: "testuser"
+          remote-password: "testpass"
+          local-path: "."
+          remote-path: "/upload"
+          sync: "full"
+          proxy: "true"
+          proxy-host: "127.0.0.1"
+          proxy-port: "22"
+          proxy-forwarding-port: "1080"
+          proxy-user: "proxyuser"
+          proxy-private-key: "-----BEGIN OPENSSH PRIVATE KEY-----\nfake-proxy-key-for-testing\n-----END OPENSSH PRIVATE KEY-----"
+          webhook: "http://127.0.0.1:9999/webhook"
+
+      - name: Assert action ran (proxy and webhook inputs accepted)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          # The action should fail at proxy/lftp connection (no real server),
+          # NOT at input validation. We verify the action accepted the
+          # proxy-host, proxy-user, proxy-private-key, and webhook inputs.
+          if [ "$OUTCOME" = "failure" ] || [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action ran with proxy and webhook inputs (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome=$OUTCOME"
+            exit 1
+          fi

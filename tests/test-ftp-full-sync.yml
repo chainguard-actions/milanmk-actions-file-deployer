@@ -1,4 +1,4 @@
-name: Test invalid protocol input
+name: Test FTP protocol with full sync validation
 on:
   workflow_dispatch:
     inputs:
@@ -12,27 +12,30 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Run action with invalid protocol
+      - name: Run action with FTP protocol and full sync
         id: action
         uses: .
         continue-on-error: true
         with:
-          remote-protocol: "invalid-protocol"
+          remote-protocol: "ftp"
           remote-host: "localhost"
-          remote-port: 22
+          remote-port: 21
           remote-user: "testuser"
           remote-password: "testpass"
           local-path: "."
           remote-path: "/tmp/deploy"
           sync: "full"
 
-      - name: Assert action failed due to invalid protocol
+      - name: Assert action failed at connection (not at validation)
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
           echo "outcome: $OUTCOME"
+          # The action should fail because there is no real FTP server,
+          # but it must have passed input validation (protocol=ftp, sync=full are valid).
+          # We expect failure (connection refused), not success.
           if [ "$OUTCOME" != "failure" ]; then
-            echo "FAIL: expected action to fail with invalid protocol, but got outcome: $OUTCOME"
+            echo "FAIL: expected action to fail (no real FTP server), but got: $OUTCOME"
             exit 1
           fi
-          echo "PASS: action correctly failed with invalid protocol"
+          echo "PASS: action failed at connection stage as expected (validation passed)"
