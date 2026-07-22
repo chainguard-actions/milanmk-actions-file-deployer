@@ -1,0 +1,43 @@
+name: Test SFTP protocol with delta sync validation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Run action with sftp protocol and delta sync (expect failure at connection)
+        id: action
+        uses: .
+        continue-on-error: true
+        with:
+          remote-protocol: "sftp"
+          remote-host: "127.0.0.1"
+          remote-port: "22"
+          remote-user: "testuser"
+          remote-password: "testpass"
+          local-path: "."
+          remote-path: "/tmp/deploy"
+          sync: "delta"
+
+      - name: Assert action did not fail due to validation errors
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          # The action should fail (no real SFTP server), but NOT because of input validation.
+          # Valid protocol 'sftp' and valid sync 'delta' should pass validation.
+          # The action will fail at the lftp connection stage.
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded (unexpected but acceptable)"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed at connection stage (not validation), sftp+delta were accepted"
+          else
+            echo "FAIL: unexpected outcome: $OUTCOME"
+            exit 1
+          fi

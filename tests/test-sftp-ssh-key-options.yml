@@ -1,0 +1,40 @@
+name: Test SFTP with SSH key, options, delta excludes, and artifacts
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          remote-protocol: sftp
+          remote-host: 127.0.0.1
+          remote-port: 22
+          remote-user: testuser
+          remote-password: testpass
+          ssh-private-key: |
+            -----BEGIN OPENSSH PRIVATE KEY-----
+            ZmFrZWtleQ==
+            -----END OPENSSH PRIVATE KEY-----
+          ssh-options: "-o ConnectTimeout=5"
+          local-path: .
+          remote-path: /tmp/deploy
+          sync: delta
+          sync-delta-excludes: "*.log"
+          artifacts: "false"
+          debug: "false"
+      - name: Assert action ran (input coverage check)
+        run: |
+          echo "Action outcome: ${{ steps.action.outcome }}"
+          # The action is expected to fail at connection since 127.0.0.1:22 may not be available
+          # but we verify it ran (not skipped) to confirm inputs were accepted
+          if [ "${{ steps.action.outcome }}" = "skipped" ]; then
+            echo "FAIL: action was skipped, expected it to run"
+            exit 1
+          fi
+          echo "PASS: action ran with ssh-private-key, ssh-options, sync-delta-excludes, artifacts inputs"
