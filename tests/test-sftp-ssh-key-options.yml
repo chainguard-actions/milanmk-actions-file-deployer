@@ -1,4 +1,4 @@
-name: Test FTP with extra options
+name: Test SFTP with SSH key and options
 on:
   workflow_dispatch:
 jobs:
@@ -12,19 +12,21 @@ jobs:
         uses: .
         continue-on-error: true
         with:
-          remote-protocol: ftp
+          remote-protocol: sftp
           remote-host: "192.0.2.1"
-          remote-port: 21
-          remote-user: ftpuser
-          remote-password: "ftppassword"
+          remote-port: 22
+          remote-user: testuser
+          remote-password: ""
+          ssh-private-key: |
+            -----BEGIN OPENSSH PRIVATE KEY-----
+            ZmFrZWtleWZvcnRlc3Rpbmcx
+            -----END OPENSSH PRIVATE KEY-----
+          ssh-options: "-o ConnectTimeout=5"
           local-path: "."
           remote-path: "/remote/path"
-          sync: full
-          ftp-options: "set net:timeout 5"
-          ftp-mirror-options: "--parallel=2"
-          ftp-post-sync-commands: "echo done"
-          artifacts: "true"
-          debug: "false"
+          sync: delta
+          sync-delta-excludes: "*.log *.tmp"
+          debug: "true"
       - name: Assert action ran (fails gracefully on unreachable host)
         env:
           OUTCOME: ${{ steps.action.outcome }}
