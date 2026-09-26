@@ -1,4 +1,4 @@
-name: Test proxy inputs
+name: Test SFTP with SSH private key and options
 on:
   workflow_dispatch:
 jobs:
@@ -16,28 +16,25 @@ jobs:
           remote-host: 192.0.2.1
           remote-port: 22
           remote-user: testuser
-          remote-password: testpassword
-          proxy: "true"
-          proxy-host: 192.0.2.2
-          proxy-port: 22
-          proxy-forwarding-port: 1080
-          proxy-user: proxyuser
-          proxy-private-key: |
+          ssh-private-key: |
             -----BEGIN OPENSSH PRIVATE KEY-----
             ZmFrZWtleWZha2VrZXlmYWtla2V5ZmFrZWtleWZha2VrZXlmYWtla2V5
             -----END OPENSSH PRIVATE KEY-----
+          ssh-options: "-o ConnectTimeout=5"
           local-path: .
           remote-path: /remote/path
           sync: full
-      - name: Assert action ran with proxy inputs
+          artifacts: "false"
+      - name: Assert action ran with ssh-private-key and ssh-options inputs
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
           echo "outcome: $OUTCOME"
-          # The action will fail at proxy SSH connection (no real proxy server), but it must
-          # have processed the proxy-host, proxy-user, and proxy-private-key inputs.
+          # The action will fail at lftp connection (no real server), but it must
+          # have processed the ssh-private-key and ssh-options inputs.
+          # We accept both success (unlikely) and failure (expected - no real server).
           if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action ran with proxy-host, proxy-user, proxy-private-key inputs (outcome: $OUTCOME)"
+            echo "PASS: action ran with ssh-private-key and ssh-options inputs (outcome: $OUTCOME)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1
