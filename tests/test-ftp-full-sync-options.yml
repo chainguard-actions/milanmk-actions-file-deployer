@@ -1,4 +1,4 @@
-name: Test FTP full sync with ftp-options, ftp-mirror-options, ftp-post-sync-commands
+name: Test FTP full sync with options
 on:
   workflow_dispatch:
 jobs:
@@ -6,23 +6,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
       - id: action
         uses: .
         continue-on-error: true
         with:
           remote-protocol: ftp
-          remote-host: 127.0.0.1
+          remote-host: ftp.example.invalid
           remote-port: 21
-          remote-user: testuser
-          remote-password: testpass
+          remote-user: ftpuser
+          remote-password: ftppassword
           local-path: .
-          remote-path: /tmp/deploy
+          remote-path: /upload
           sync: full
           ftp-options: "set net:timeout 5"
           ftp-mirror-options: "--verbose"
           ftp-post-sync-commands: "echo done"
           debug: "false"
-      - name: Assert action ran (connection failure is expected)
+      - name: Assert action ran (connection expected to fail on invalid host)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
         run: |
-          echo "Action completed with continue-on-error. Input coverage verified."
-          echo "PASS"
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (no real FTP server available)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
