@@ -128,19 +128,21 @@ runs:
         INPUT_WEBHOOK: ${{ inputs.webhook }}
         INPUT_ARTIFACTS: ${{ inputs.artifacts }}
         INPUT_DEBUG: ${{ inputs.debug }}
-        GITHUB_REPOSITORY_NAME: ${{ github.repository }}
-        GITHUB_WORKFLOW_NAME: ${{ github.workflow }}
-        GITHUB_JOB_NAME: ${{ github.job }}
-        GITHUB_RUN_ID_VAL: ${{ github.run_id }}
-        GITHUB_REF_VAL: ${{ github.ref }}
-        GITHUB_EVENT_NAME_VAL: ${{ github.event_name }}
-        GITHUB_ACTOR_VAL: ${{ github.actor }}
+        GITHUB_REPOSITORY_VAR: ${{ github.repository }}
+        GITHUB_WORKFLOW_VAR: ${{ github.workflow }}
+        GITHUB_JOB_VAR: ${{ github.job }}
+        GITHUB_RUN_ID_VAR: ${{ github.run_id }}
+        GITHUB_REF_VAR: ${{ github.ref }}
+        GITHUB_EVENT_NAME_VAR: ${{ github.event_name }}
+        GITHUB_ACTOR_VAR: ${{ github.actor }}
+        GITHUB_SHA_VAR: ${{ github.sha }}
+        GITHUB_EVENT_PATH_VAR: ${{ github.event_path }}
         GITHUB_HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
-        GITHUB_SHA_VAL: ${{ github.sha }}
-        GITHUB_EVENT_PATH_VAL: ${{ github.event_path }}
         GITHUB_EVENT_BEFORE: ${{ github.event.before }}
         GITHUB_EVENT_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         GITHUB_EVENT_INPUTS_SYNC: ${{ github.event.inputs.sync }}
+        GITHUB_TOJON_ENV: ${{ toJSON(env) }}
+        GITHUB_TOJON_INPUTS: ${{ toJSON(inputs) }}
       run: |
         echo "::group::Initialization"
 
@@ -153,15 +155,15 @@ runs:
           local post_data=$(jq --null-input \
           --arg timestamp `date +%s` \
           --arg status "${status}" \
-          --arg repository "$GITHUB_REPOSITORY_NAME" \
-          --arg workflow "$GITHUB_WORKFLOW_NAME" \
-          --arg job "$GITHUB_JOB_NAME" \
-          --arg run_id "$GITHUB_RUN_ID_VAL" \
-          --arg ref "$GITHUB_REF_VAL" \
-          --arg event_name "$GITHUB_EVENT_NAME_VAL" \
-          --arg actor "$GITHUB_ACTOR_VAL" \
+          --arg repository "$GITHUB_REPOSITORY_VAR" \
+          --arg workflow "$GITHUB_WORKFLOW_VAR" \
+          --arg job "$GITHUB_JOB_VAR" \
+          --arg run_id "$GITHUB_RUN_ID_VAR" \
+          --arg ref "$GITHUB_REF_VAR" \
+          --arg event_name "$GITHUB_EVENT_NAME_VAR" \
+          --arg actor "$GITHUB_ACTOR_VAR" \
           --arg message "$GITHUB_HEAD_COMMIT_MESSAGE" \
-          --arg revision "$GITHUB_SHA_VAL" \
+          --arg revision "$GITHUB_SHA_VAR" \
           '{"timestamp": $timestamp, "status": $status, "repository": $repository, "workflow": $workflow, "job": $job, "run_id": $run_id, "ref": $ref, "event_name": $event_name, "actor": $actor, "message": $message, "revision": $revision}')
 
           curl --data "${post_data}" --header "Content-Type: application/json" --max-time 30 --show-error --silent --user-agent "GitHub Workflow" "$INPUT_WEBHOOK"
@@ -186,7 +188,7 @@ runs:
 
         input_remote_password="$INPUT_REMOTE_PASSWORD"
         if [ "$INPUT_REMOTE_PASSWORD" == "" ]; then
-          input_remote_password="$(openssl rand -hex 16)"
+          input_remote_password="dummypassword"
         fi
 
         input_proxy="$INPUT_PROXY"
@@ -197,7 +199,7 @@ runs:
         fi
 
         input_sync="$INPUT_SYNC"
-        if [ "$GITHUB_EVENT_NAME_VAL" == "workflow_dispatch" ]; then
+        if [ "$GITHUB_EVENT_NAME_VAR" == "workflow_dispatch" ]; then
           input_sync="$GITHUB_EVENT_INPUTS_SYNC"
         fi
 
@@ -220,11 +222,11 @@ runs:
         if [ "$INPUT_DEBUG" == "true" ]; then
           echo "::group::Debug"
 
-          echo "Context: github.event" && cat "$GITHUB_EVENT_PATH_VAL" && show_hr
+          echo "Context: github.event" && cat "$GITHUB_EVENT_PATH_VAR" && show_hr
 
-          echo "Context: env" && env && show_hr
+          echo "Context: env" && echo "$GITHUB_TOJON_ENV" && show_hr
 
-          echo "Inputs:" && env | grep '^INPUT_'
+          echo "Inputs:" && echo "$GITHUB_TOJON_INPUTS"
 
           echo "::endgroup::"
         fi
@@ -239,7 +241,7 @@ runs:
           apt_quiet=""
         fi
 
-        sudo apt-get ${apt_quiet} update && sudo apt-get ${apt_quiet} --no-install-recommends --yes install lftp ${proxy_cmd:+"$proxy_cmd"}
+        sudo apt-get ${apt_quiet} update && sudo apt-get ${apt_quiet} --no-install-recommends --yes install lftp ${proxy_cmd:+"${proxy_cmd}"}
 
         echo "::endgroup::"
 
@@ -268,12 +270,7 @@ runs:
             echo "$INPUT_PROXY_PRIVATE_KEY" > ${key_proxy} && chmod 600 ${key_proxy} && echo "File created: ${key_proxy}" && show_hr
 
             config_proxychains=~/.proxychains/proxychains.conf
-            mkdir ~/.proxychains && echo "strict_chain
-            quiet_mode
-            tcp_read_time_out 15000
-            tcp_connect_time_out 10000
-            [ProxyList]
-            socks5 127.0.0.1 $INPUT_PROXY_FORWARDING_PORT" > ${config_proxychains} && echo "File created: ${config_proxychains}"
+            mkdir ~/.proxychains && printf 'strict_chain\nquiet_mode\ntcp_read_time_out 15000\ntcp_connect_time_out 10000\n[ProxyList]\nsocks5 127.0.0.1 %s\n' "$INPUT_PROXY_FORWARDING_PORT" > ${config_proxychains} && echo "File created: ${config_proxychains}"
             [ "$INPUT_DEBUG" == "true" ] && cat ${config_proxychains}
             show_hr
           else
@@ -299,11 +296,16 @@ runs:
         set ssl:check-hostname false
         set ssl:verify-certificate false
         set xfer:parallel 3" > ~/.lftprc
-        [ -n "$INPUT_FTP_OPTIONS" ] && printf '%s\n' "$INPUT_FTP_OPTIONS" >> ~/.lftprc
+        printf '%s\n' "$INPUT_FTP_OPTIONS" >> ~/.lftprc
+        ssh_opts=()
+        if [ -n "$INPUT_SSH_OPTIONS" ]; then
+          while IFS= read -r -d '' t; do ssh_opts+=("$t"); done \
+            < <(printf '%s' "$INPUT_SSH_OPTIONS" | xargs printf '%s\0')
+        fi
         if [ "$INPUT_REMOTE_PROTOCOL" == "sftp" ] && [ "$INPUT_SSH_PRIVATE_KEY" != "" ]; then
-          printf 'set sftp:connect-program /usr/bin/ssh -a -x -i ~/ssh_private_key %s\n' "$INPUT_SSH_OPTIONS" >> ~/.lftprc
+          { printf 'set sftp:connect-program /usr/bin/ssh -a -x -i ~/ssh_private_key'; printf ' %s' "${ssh_opts[@]}"; printf '\n'; } >> ~/.lftprc
         else
-          printf 'set sftp:connect-program /usr/bin/ssh -a -x %s\n' "$INPUT_SSH_OPTIONS" >> ~/.lftprc
+          { printf 'set sftp:connect-program /usr/bin/ssh -a -x'; printf ' %s' "${ssh_opts[@]}"; printf '\n'; } >> ~/.lftprc
         fi
         printf 'open %s://%s@%s:%s\n' "$INPUT_REMOTE_PROTOCOL" "$INPUT_REMOTE_USER" "$INPUT_REMOTE_HOST" "$INPUT_REMOTE_PORT" >> ~/.lftprc
         echo "File created: ~/.lftprc"
@@ -318,7 +320,7 @@ runs:
 
           if [ "$INPUT_PROXY_USER" != "" ] && [ "$INPUT_PROXY_HOST" != "" ]; then
             if ssh -A -D "$INPUT_PROXY_FORWARDING_PORT" -f -N -p "$INPUT_PROXY_PORT" -i ~/proxy_private_key "$INPUT_PROXY_USER@$INPUT_PROXY_HOST"; then
-              echo "Proxy connected" && show_hr && echo "Proxy IP address: $(${proxy_cmd:+"$proxy_cmd"} curl --max-time 10 --show-error --silent "http://checkip.amazonaws.com/")"
+              echo "Proxy connected" && show_hr && echo "Proxy IP address: $(${proxy_cmd:+"${proxy_cmd}"} curl --max-time 10 --show-error --silent "http://checkip.amazonaws.com/")"
             else
               echo "::error::Proxy connection failed."
               exit 1
@@ -335,12 +337,12 @@ runs:
 
         echo "::group::Prepare files"
 
-        echo "Event: $GITHUB_EVENT_NAME_VAL
-        Revision: https://github.com/$GITHUB_REPOSITORY_NAME/commit/$GITHUB_SHA_VAL
-        Committer: $GITHUB_ACTOR_VAL
+        echo "Event: $GITHUB_EVENT_NAME_VAR
+        Revision: https://github.com/$GITHUB_REPOSITORY_VAR/commit/$GITHUB_SHA_VAR
+        Committer: $GITHUB_ACTOR_VAR
         Message: $GITHUB_HEAD_COMMIT_MESSAGE" && show_hr
 
-        echo "$GITHUB_SHA_VAL" > "${local_path_slash}.deploy-revision" && echo "File created: ${local_path_slash}.deploy-revision" && cat "${local_path_slash}.deploy-revision" && show_hr
+        echo "$GITHUB_SHA_VAR" > "${local_path_slash}.deploy-revision" && echo "File created: ${local_path_slash}.deploy-revision" && cat "${local_path_slash}.deploy-revision" && show_hr
 
         if [ "${input_sync}" == "delta" ]; then
           touch ~/files_to_upload ~/files_to_delete
@@ -348,14 +350,14 @@ runs:
           git_previous_commit=""
 
           if [ "${git_depth}" -gt 1 ]; then
-            if [ "$GITHUB_EVENT_NAME_VAL" == "push" ]; then
+            if [ "$GITHUB_EVENT_NAME_VAR" == "push" ]; then
               git_previous_commit="$GITHUB_EVENT_BEFORE"
-            elif [ "$GITHUB_EVENT_NAME_VAL" == "pull_request" ]; then
+            elif [ "$GITHUB_EVENT_NAME_VAR" == "pull_request" ]; then
               git_previous_commit="$GITHUB_EVENT_PR_BASE_SHA"
-            elif [ "$GITHUB_EVENT_NAME_VAL" == "workflow_dispatch" ]; then
-              git_previous_commit=$(git rev-parse "$GITHUB_SHA_VAL"^)
+            elif [ "$GITHUB_EVENT_NAME_VAR" == "workflow_dispatch" ]; then
+              git_previous_commit=$(git rev-parse "$GITHUB_SHA_VAR"^)
             else
-              echo "::error::Event not supported for delta synchronization: $GITHUB_EVENT_NAME_VAL. Supported events are 'push', 'pull_request' and 'workflow_dispatch'."
+              echo "::error::Event not supported for delta synchronization: $GITHUB_EVENT_NAME_VAR. Supported events are 'push', 'pull_request' and 'workflow_dispatch'."
               exit 1
             fi
           else
@@ -363,30 +365,29 @@ runs:
             exit 1
           fi
 
-          echo "Previous Revision: https://github.com/$GITHUB_REPOSITORY_NAME/commit/${git_previous_commit}" && show_hr
+          echo "Previous Revision: https://github.com/$GITHUB_REPOSITORY_VAR/commit/${git_previous_commit}" && show_hr
 
           # ${proxy_cmd} lftp -c "set log:enabled/xfer false; get -O ~ \"${remote_path_slash}.deploy-revision\"; exit 0"
           # echo -n "Remote Revision: " && [ -f ~/.deploy-revision ] && cat ~/.deploy-revision || echo ""
           # show_hr
 
           if git cat-file -t "${git_previous_commit}" &>/dev/null; then
-            sync_delta_excludes_args=()
+            sync_delta_excludes=()
             if [ -n "$INPUT_SYNC_DELTA_EXCLUDES" ]; then
-              while IFS= read -r -d '' t; do sync_delta_excludes_args+=("$t"); done \
+              while IFS= read -r -d '' t; do sync_delta_excludes+=("$t"); done \
                 < <(printf '%s' "$INPUT_SYNC_DELTA_EXCLUDES" | xargs printf '%s\0')
             fi
-            git diff --diff-filter=ACMRT --name-only "${git_previous_commit}".."$GITHUB_SHA_VAL" -- "${local_path_unslash}" ':!/.git*' "${sync_delta_excludes_args[@]}" > ~/files_to_upload
-            git diff-tree --diff-filter=D --name-only -t "${git_previous_commit}".."$GITHUB_SHA_VAL" -- "${local_path_unslash}" ':!/.git*' "${sync_delta_excludes_args[@]}" > ~/files_to_delete
+            git diff --diff-filter=ACMRT --name-only "${git_previous_commit}".."$GITHUB_SHA_VAR" -- "${local_path_unslash}" ':!/.git*' "${sync_delta_excludes[@]}" > ~/files_to_upload
+            git diff-tree --diff-filter=D --name-only -t "${git_previous_commit}".."$GITHUB_SHA_VAR" -- "${local_path_unslash}" ':!/.git*' "${sync_delta_excludes[@]}" > ~/files_to_delete
 
-            local_path_unslash_q=$(printf '%q' "$local_path_unslash")
-            sed --in-place --regexp-extended "s#(.*)#realpath --canonicalize-missing --relative-to=${local_path_unslash_q} \1#e" ~/files_to_upload
-            sed --in-place --regexp-extended "s#(.*)#realpath --canonicalize-missing --relative-to=${local_path_unslash_q} \1#e" ~/files_to_delete
+            tmp_upload=$(mktemp) && while IFS= read -r _fpath; do realpath --canonicalize-missing --relative-to="$local_path_unslash" "$_fpath"; done < ~/files_to_upload > "$tmp_upload" && mv "$tmp_upload" ~/files_to_upload
+            tmp_delete=$(mktemp) && while IFS= read -r _fpath; do realpath --canonicalize-missing --relative-to="$local_path_unslash" "$_fpath"; done < ~/files_to_delete > "$tmp_delete" && mv "$tmp_delete" ~/files_to_delete
 
             echo "File created: ~/files_to_upload" && cat ~/files_to_upload && show_hr
             echo "File created: ~/files_to_delete" && cat ~/files_to_delete && show_hr
 
             if [ "$INPUT_ARTIFACTS" == "true" ]; then
-              echo "Copy transfer artifacts" && mkdir ~/transfer_files && rsync --verbose --files-from=$HOME/files_to_upload "${local_path_slash}" ~/transfer_files/
+              echo "Copy transfer artifacts" && mkdir ~/transfer_files && rsync --verbose --files-from="$HOME/files_to_upload" "${local_path_slash}" ~/transfer_files/
             fi
           else
             echo "::warning::Invalid base commit for delta synchronization: ${git_previous_commit}. Please ignore if this is an initial commit or newly created branch."
@@ -410,27 +411,28 @@ runs:
 
         touch "${local_path_slash}.deploy-running"
 
-        ftp_post_sync_cmds_file=~/ftp_post_sync_commands.lftp
-        printf '%s\n' "$INPUT_FTP_POST_SYNC_COMMANDS" > "$ftp_post_sync_cmds_file"
-
-        if [ "${input_sync}" == "full" ]; then
-          ftp_mirror_opts=()
-          if [ -n "$INPUT_FTP_MIRROR_OPTIONS" ]; then
-            while IFS= read -r -d '' t; do ftp_mirror_opts+=("$t"); done \
-              < <(printf '%s' "$INPUT_FTP_MIRROR_OPTIONS" | xargs printf '%s\0')
-          fi
-          ${proxy_cmd:+"$proxy_cmd"} lftp -c "put -O \"${remote_path_unslash}\" .deploy-running;
-            mirror --exclude-glob=.git*/ --max-errors=10 --reverse ${ftp_mirror_opts[*]+"${ftp_mirror_opts[@]}"} \"${local_path_unslash}\" \"${remote_path_unslash}\";
-            rm -f \"${remote_path_slash}.deploy-running\";
-            source \"${ftp_post_sync_cmds_file}\""
-        else
-          ${proxy_cmd:+"$proxy_cmd"} lftp -c "lcd \"${local_path_unslash}\";
-            put -O \"${remote_path_unslash}\" .deploy-running;
-            mput -d -O \"${remote_path_unslash}\" .deploy-revision $(awk '{ printf "\"%s\" ", $0 }' ~/files_to_upload);
-            rm -f \"${remote_path_slash}.deploy-check\" $(awk -v REMOTEPATH=\"${remote_path_slash}\" '{ printf "\"%s%s\" ", REMOTEPATH, $0 }' ~/files_to_delete);
-            rm -f \"${remote_path_slash}.deploy-running\";
-            source \"${ftp_post_sync_cmds_file}\""
+        mirror_opts=()
+        if [ -n "$INPUT_FTP_MIRROR_OPTIONS" ]; then
+          while IFS= read -r -d '' t; do mirror_opts+=("$t"); done \
+            < <(printf '%s' "$INPUT_FTP_MIRROR_OPTIONS" | xargs printf '%s\0')
         fi
+        lftp_script=$(mktemp)
+        if [ "${input_sync}" == "full" ]; then
+          printf 'put -O "%s" .deploy-running;\n' "${remote_path_unslash}" > "$lftp_script"
+          { printf 'mirror --exclude-glob=.git*/ --max-errors=10 --reverse'; printf ' %s' "${mirror_opts[@]}"; printf ' %s %s;\n' "${local_path_unslash}" "${remote_path_unslash}"; } >> "$lftp_script"
+          printf 'rm -f "%s.deploy-running";\n' "${remote_path_slash}" >> "$lftp_script"
+          printf '%s\n' "$INPUT_FTP_POST_SYNC_COMMANDS" >> "$lftp_script"
+          ${proxy_cmd:+"${proxy_cmd}"} lftp -f "$lftp_script"
+        else
+          printf 'lcd "%s";\n' "${local_path_unslash}" > "$lftp_script"
+          printf 'put -O "%s" .deploy-running;\n' "${remote_path_unslash}" >> "$lftp_script"
+          printf 'mput -d -O "%s" .deploy-revision %s;\n' "${remote_path_unslash}" "$(awk '{ printf "\"%s\" ", $0 }' ~/files_to_upload)" >> "$lftp_script"
+          printf 'rm -f "%s.deploy-check" %s;\n' "${remote_path_slash}" "$(awk -v REMOTEPATH="${remote_path_slash}" '{ printf "\"%s%s\" ", REMOTEPATH, $0 }' ~/files_to_delete)" >> "$lftp_script"
+          printf 'rm -f "%s.deploy-running";\n' "${remote_path_slash}" >> "$lftp_script"
+          printf '%s\n' "$INPUT_FTP_POST_SYNC_COMMANDS" >> "$lftp_script"
+          ${proxy_cmd:+"${proxy_cmd}"} lftp -f "$lftp_script"
+        fi
+        rm -f "$lftp_script"
 
         [ -f ~/transfer_log.txt ] && cat ~/transfer_log.txt
 
