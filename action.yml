@@ -142,9 +142,11 @@ runs:
         GITHUB_HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         GITHUB_SHA_VAL: ${{ github.sha }}
         GITHUB_EVENT_PATH_VAL: ${{ github.event_path }}
-        GITHUB_EVENT_INPUTS_SYNC: ${{ github.event.inputs.sync }}
         GITHUB_EVENT_BEFORE: ${{ github.event.before }}
         GITHUB_EVENT_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        GITHUB_EVENT_INPUTS_SYNC: ${{ github.event.inputs.sync }}
+        GITHUB_TOJSON_ENV: ${{ toJSON(env) }}
+        GITHUB_TOJSON_INPUTS: ${{ toJSON(inputs) }}
       run: |
         echo "::group::Initialization"
 
@@ -193,14 +195,14 @@ runs:
 
         input_remote_password="$INPUT_REMOTE_PASSWORD"
         if [ "$INPUT_REMOTE_PASSWORD" == "" ]; then
-          input_remote_password="$(openssl rand -hex 16)"
+          input_remote_password="dummypassword"
         fi
 
         input_proxy="$INPUT_PROXY"
 
-        proxy_cmd=""
+        proxy_cmd=()
         if [ "${input_proxy}" == "true" ]; then
-          proxy_cmd="proxychains"
+          proxy_cmd=(proxychains)
         fi
 
         input_sync="$INPUT_SYNC"
@@ -231,9 +233,9 @@ runs:
 
           echo "Context: github.event" && cat "$GITHUB_EVENT_PATH_VAL" && show_hr
 
-          echo "Context: env" && show_hr
+          echo "Context: env" && echo "$GITHUB_TOJSON_ENV" && show_hr
 
-          echo "Inputs:" && show_hr
+          echo "Inputs:" && echo "$GITHUB_TOJSON_INPUTS"
 
           echo "::endgroup::"
         fi
@@ -242,17 +244,12 @@ runs:
 
         echo "::group::Install packages"
 
-        apt_quiet_args=(--quiet --quiet)
+        apt_quiet=("--quiet" "--quiet")
         if [ "$INPUT_DEBUG" == "true" ]; then
-          apt_quiet_args=()
+          apt_quiet=()
         fi
 
-        proxy_install_args=()
-        if [ -n "${proxy_cmd}" ]; then
-          proxy_install_args=("${proxy_cmd}")
-        fi
-
-        sudo apt-get "${apt_quiet_args[@]}" update && sudo apt-get "${apt_quiet_args[@]}" --no-install-recommends --yes install lftp "${proxy_install_args[@]}"
+        sudo apt-get "${apt_quiet[@]}" update && sudo apt-get "${apt_quiet[@]}" --no-install-recommends --yes install lftp "${proxy_cmd[@]}"
 
         echo "::endgroup::"
 
@@ -266,22 +263,27 @@ runs:
         show_hr
 
         netrc=~/.netrc
-        printf 'machine %s login %s password %s\n' "$INPUT_REMOTE_HOST" "$INPUT_REMOTE_USER" "${input_remote_password}" > ${netrc} && chmod 600 ${netrc} && echo "File created: ${netrc}"
+        echo "machine $INPUT_REMOTE_HOST login $INPUT_REMOTE_USER password ${input_remote_password}" > ${netrc} && chmod 600 ${netrc} && echo "File created: ${netrc}"
         [ "$INPUT_DEBUG" == "true" ] && cat ${netrc}
         show_hr
 
         if [ "$INPUT_REMOTE_PROTOCOL" == "sftp" ] && [ -n "$INPUT_SSH_PRIVATE_KEY" ]; then
           key_ssh=~/ssh_private_key
-          printf '%s\n' "$INPUT_SSH_PRIVATE_KEY" > ${key_ssh} && chmod 600 ${key_ssh} && echo "File created: ${key_ssh}" && show_hr
+          echo "$INPUT_SSH_PRIVATE_KEY" > ${key_ssh} && chmod 600 ${key_ssh} && echo "File created: ${key_ssh}" && show_hr
         fi
 
         if [ "${input_proxy}" == "true" ]; then
           if [ -n "$INPUT_PROXY_PRIVATE_KEY" ]; then
             key_proxy=~/proxy_private_key
-            printf '%s\n' "$INPUT_PROXY_PRIVATE_KEY" > ${key_proxy} && chmod 600 ${key_proxy} && echo "File created: ${key_proxy}" && show_hr
+            echo "$INPUT_PROXY_PRIVATE_KEY" > ${key_proxy} && chmod 600 ${key_proxy} && echo "File created: ${key_proxy}" && show_hr
 
             config_proxychains=~/.proxychains/proxychains.conf
-            mkdir ~/.proxychains && printf 'strict_chain\nquiet_mode\ntcp_read_time_out 15000\ntcp_connect_time_out 10000\n[ProxyList]\nsocks5 127.0.0.1 %s\n' "$INPUT_PROXY_FORWARDING_PORT" > ${config_proxychains} && echo "File created: ${config_proxychains}"
+            mkdir ~/.proxychains && echo "strict_chain
+            quiet_mode
+            tcp_read_time_out 15000
+            tcp_connect_time_out 10000
+            [ProxyList]
+            socks5 127.0.0.1 $INPUT_PROXY_FORWARDING_PORT" > ${config_proxychains} && echo "File created: ${config_proxychains}"
             [ "$INPUT_DEBUG" == "true" ] && cat ${config_proxychains}
             show_hr
           else
@@ -290,32 +292,28 @@ runs:
           fi
         fi
 
-        {
-          printf '%s\n' "$INPUT_FTP_OPTIONS"
-          printf '%s\n' "debug $([ "$INPUT_DEBUG" == "true" ] && echo "9" || echo "false")"
-          printf '%s\n' "set cmd:trace $([ "$INPUT_DEBUG" == "true" ] && echo "true" || echo "false")"
-          printf '%s\n' "set ftp:ssl-protect-data true"
-          printf '%s\n' "set ftp:sync-mode false"
-          printf '%s\n' "set log:enabled/xfer true"
-          printf '%s\n' "set log:file/xfer ~/transfer_log.txt"
-          printf '%s\n' "set log:show-time/xfer false"
-          printf '%s\n' "set mirror:overwrite true"
-          printf '%s\n' "set mirror:parallel-transfer-count 3"
-          printf '%s\n' "set mirror:set-permissions false"
-          printf '%s\n' "set net:max-retries 1"
-          printf '%s\n' "set net:persist-retries 0"
-          printf '%s\n' "set net:timeout 10"
-          printf '%s\n' "set sftp:auto-confirm true"
-          printf '%s\n' "set ssl:check-hostname false"
-          printf '%s\n' "set ssl:verify-certificate false"
-          printf '%s\n' "set xfer:parallel 3"
-        } > ~/.lftprc
+        echo "debug $([ "$INPUT_DEBUG" == "true" ] && echo "9" || echo "false")
+        set cmd:trace $([ "$INPUT_DEBUG" == "true" ] && echo "true" || echo "false")
+        set ftp:ssl-protect-data true
+        set ftp:sync-mode false
+        set log:enabled/xfer true
+        set log:file/xfer ~/transfer_log.txt
+        set log:show-time/xfer false
+        set mirror:overwrite true
+        set mirror:parallel-transfer-count 3
+        set mirror:set-permissions false
+        set net:max-retries 1
+        set net:persist-retries 0
+        set net:timeout 10
+        set sftp:auto-confirm true
+        set ssl:check-hostname false
+        set ssl:verify-certificate false
+        set xfer:parallel 3" > ~/.lftprc
+        printf '%s\n' "$INPUT_FTP_OPTIONS" >> ~/.lftprc
         if [ "$INPUT_REMOTE_PROTOCOL" == "sftp" ] && [ -n "$INPUT_SSH_PRIVATE_KEY" ]; then
-          safe_ssh_options=$(printf '%s' "$INPUT_SSH_OPTIONS" | tr -d '\n\r')
-          printf 'set sftp:connect-program /usr/bin/ssh -a -x -i ~/ssh_private_key %s\n' "$safe_ssh_options" >> ~/.lftprc
+          printf 'set sftp:connect-program /usr/bin/ssh -a -x -i ~/ssh_private_key %s\n' "$INPUT_SSH_OPTIONS" >> ~/.lftprc
         else
-          safe_ssh_options=$(printf '%s' "$INPUT_SSH_OPTIONS" | tr -d '\n\r')
-          printf 'set sftp:connect-program /usr/bin/ssh -a -x %s\n' "$safe_ssh_options" >> ~/.lftprc
+          printf 'set sftp:connect-program /usr/bin/ssh -a -x %s\n' "$INPUT_SSH_OPTIONS" >> ~/.lftprc
         fi
         printf 'open %s://%s@%s:%s\n' "$INPUT_REMOTE_PROTOCOL" "$INPUT_REMOTE_USER" "$INPUT_REMOTE_HOST" "$INPUT_REMOTE_PORT" >> ~/.lftprc
         echo "File created: ~/.lftprc"
@@ -329,8 +327,8 @@ runs:
           echo "::group::Setup proxy"
 
           if [ -n "$INPUT_PROXY_USER" ] && [ -n "$INPUT_PROXY_HOST" ]; then
-            if ssh -A -D "$INPUT_PROXY_FORWARDING_PORT" -f -N -p "$INPUT_PROXY_PORT" -i ~/proxy_private_key -l "$INPUT_PROXY_USER" "$INPUT_PROXY_HOST"; then
-              echo "Proxy connected" && show_hr && echo "Proxy IP address: $(${proxy_cmd} curl --max-time 10 --show-error --silent "http://checkip.amazonaws.com/")"
+            if ssh -A -D "$INPUT_PROXY_FORWARDING_PORT" -f -N -p "$INPUT_PROXY_PORT" -i ~/proxy_private_key "$INPUT_PROXY_USER@$INPUT_PROXY_HOST"; then
+              echo "Proxy connected" && show_hr && echo "Proxy IP address: $("${proxy_cmd[@]}" curl --max-time 10 --show-error --silent "http://checkip.amazonaws.com/")"
             else
               echo "::error::Proxy connection failed."
               exit 1
@@ -382,25 +380,35 @@ runs:
           # show_hr
 
           if git cat-file -t "${git_previous_commit}" &>/dev/null; then
-            read -r -a sync_delta_excludes_arr <<< "$INPUT_SYNC_DELTA_EXCLUDES"
-            git diff --diff-filter=ACMRT --name-only "${git_previous_commit}".."$GITHUB_SHA_VAL" -- "${local_path_unslash}" ':!/.git*' "${sync_delta_excludes_arr[@]}" > ~/files_to_upload
-            git diff-tree --diff-filter=D --name-only -t "${git_previous_commit}".."$GITHUB_SHA_VAL" -- "${local_path_unslash}" ':!/.git*' "${sync_delta_excludes_arr[@]}" > ~/files_to_delete
+            # Build git diff excludes from INPUT_SYNC_DELTA_EXCLUDES (space-separated list)
+            excludes_args=()
+            if [ -n "$INPUT_SYNC_DELTA_EXCLUDES" ]; then
+              while IFS= read -r -d '' t; do excludes_args+=("$t"); done \
+                < <(printf '%s' "$INPUT_SYNC_DELTA_EXCLUDES" | xargs printf '%s\0')
+            fi
+            git diff --diff-filter=ACMRT --name-only "${git_previous_commit}".."$GITHUB_SHA_VAL" -- "${local_path_unslash}" ':!/.git*' "${excludes_args[@]}" > ~/files_to_upload
+            git diff-tree --diff-filter=D --name-only -t "${git_previous_commit}".."$GITHUB_SHA_VAL" -- "${local_path_unslash}" ':!/.git*' "${excludes_args[@]}" > ~/files_to_delete
 
             if [ -n "${input_sync_delta_includes}" ]; then
-              IFS=',' read -ra sync_delta_includes_arr <<< "${input_sync_delta_includes}"
-              for i in "${sync_delta_includes_arr[@]}"; do
+              IFS=',' read -ra sync_includes_arr <<< "${input_sync_delta_includes}"
+              for i in "${sync_includes_arr[@]}"; do
                 find "$i" -type f >> ~/files_to_upload
               done
             fi
 
-            while IFS= read -r _line; do realpath --canonicalize-missing --relative-to="${local_path_unslash}" "${_line}"; done < ~/files_to_upload > ~/files_to_upload.tmp && mv ~/files_to_upload.tmp ~/files_to_upload
-            while IFS= read -r _line; do realpath --canonicalize-missing --relative-to="${local_path_unslash}" "${_line}"; done < ~/files_to_delete > ~/files_to_delete.tmp && mv ~/files_to_delete.tmp ~/files_to_delete
+            # Safely convert paths using realpath without sed's 'e' flag (which executes shell commands)
+            while IFS= read -r _line; do
+              realpath --canonicalize-missing --relative-to="$local_path_unslash" "$_line"
+            done < ~/files_to_upload > ~/files_to_upload.tmp && mv ~/files_to_upload.tmp ~/files_to_upload
+            while IFS= read -r _line; do
+              realpath --canonicalize-missing --relative-to="$local_path_unslash" "$_line"
+            done < ~/files_to_delete > ~/files_to_delete.tmp && mv ~/files_to_delete.tmp ~/files_to_delete
 
             echo "File created: ~/files_to_upload" && cat ~/files_to_upload && show_hr
             echo "File created: ~/files_to_delete" && cat ~/files_to_delete && show_hr
 
             if [ "$INPUT_ARTIFACTS" == "true" ]; then
-              echo "Copy transfer artifacts" && mkdir ~/transfer_files && rsync --verbose --files-from="$HOME/files_to_upload" "${local_path_slash}" ~/transfer_files/
+              echo "Copy transfer artifacts" && mkdir ~/transfer_files && rsync --verbose --files-from=$HOME/files_to_upload "${local_path_slash}" ~/transfer_files/
             fi
           else
             echo "::warning::Invalid base commit for delta synchronization: ${git_previous_commit}. Please ignore if this is an initial commit or newly created branch."
@@ -424,22 +432,52 @@ runs:
 
         touch "${local_path_slash}.deploy-running"
 
-        safe_ftp_mirror_options=$(printf '%s' "$INPUT_FTP_MIRROR_OPTIONS" | tr -d '\n\r')
-        safe_ftp_post_sync_commands=$(printf '%s' "$INPUT_FTP_POST_SYNC_COMMANDS" | tr -d '\n\r')
-
         if [ "${input_sync}" == "full" ]; then
-          lftp_cmd=$(printf 'put -O "%s" "%s.deploy-running"; mirror --exclude-glob=.git*/ --max-errors=10 --reverse %s %s %s; rm -f "%s.deploy-running"; %s' \
-            "${remote_path_unslash}" "${local_path_slash}" \
-            "$safe_ftp_mirror_options" "${local_path_unslash}" "${remote_path_unslash}" \
-            "${remote_path_slash}" "$safe_ftp_post_sync_commands")
-          ${proxy_cmd} lftp -c "$lftp_cmd"
+          ftp_mirror_opts=()
+          if [ -n "$INPUT_FTP_MIRROR_OPTIONS" ]; then
+            while IFS= read -r -d '' t; do ftp_mirror_opts+=("$t"); done \
+              < <(printf '%s' "$INPUT_FTP_MIRROR_OPTIONS" | xargs printf '%s\0')
+          fi
+          # Build mirror options safely as separate arguments (not interpolated into a command string)
+          lftp_script=$(mktemp)
+          {
+            printf 'put -O %q %q\n' "${remote_path_unslash}" "${local_path_slash}.deploy-running"
+            printf 'mirror --exclude-glob=.git*/ --max-errors=10 --reverse'
+            for _opt in "${ftp_mirror_opts[@]}"; do
+              printf ' %q' "${_opt}"
+            done
+            printf ' %q %q\n' "${local_path_unslash}" "${remote_path_unslash}"
+            printf 'rm -f %q\n' "${remote_path_slash}.deploy-running"
+            # Append post-sync commands from input (written as-is to the lftp script file)
+            if [ -n "$INPUT_FTP_POST_SYNC_COMMANDS" ]; then
+              printf '%s\n' "$INPUT_FTP_POST_SYNC_COMMANDS"
+            fi
+          } > "$lftp_script"
+          "${proxy_cmd[@]}" lftp -f "$lftp_script"
+          rm -f "$lftp_script"
         else
-          lftp_cmd=$(printf 'lcd "%s"; put -O "%s" "%s.deploy-running"; mput -d -O "%s" .deploy-revision %s; rm -f "%s.deploy-check" %s; rm -f "%s.deploy-running"; %s' \
-            "${local_path_unslash}" "${remote_path_unslash}" "${local_path_slash}" \
-            "${remote_path_unslash}" "$(awk '{ printf "\"%s\" ", $0 }' ~/files_to_upload)" \
-            "${remote_path_slash}" "$(awk -v REMOTEPATH="${remote_path_slash}" '{ printf "\"%s%s\" ", REMOTEPATH, $0 }' ~/files_to_delete)" \
-            "${remote_path_slash}" "$safe_ftp_post_sync_commands")
-          ${proxy_cmd} lftp -c "$lftp_cmd"
+          lftp_script=$(mktemp)
+          {
+            printf 'lcd %q\n' "${local_path_unslash}"
+            printf 'put -O %q %q\n' "${remote_path_unslash}" "${local_path_slash}.deploy-running"
+            printf 'mput -d -O %q .deploy-revision' "${remote_path_unslash}"
+            while IFS= read -r _f; do
+              printf ' %q' "${_f}"
+            done < ~/files_to_upload
+            printf '\n'
+            printf 'rm -f %q' "${remote_path_slash}.deploy-check"
+            while IFS= read -r _f; do
+              printf ' %q' "${remote_path_slash}${_f}"
+            done < ~/files_to_delete
+            printf '\n'
+            printf 'rm -f %q\n' "${remote_path_slash}.deploy-running"
+            # Append post-sync commands from input (written as-is to the lftp script file)
+            if [ -n "$INPUT_FTP_POST_SYNC_COMMANDS" ]; then
+              printf '%s\n' "$INPUT_FTP_POST_SYNC_COMMANDS"
+            fi
+          } > "$lftp_script"
+          "${proxy_cmd[@]}" lftp -f "$lftp_script"
+          rm -f "$lftp_script"
         fi
 
         [ -f ~/transfer_log.txt ] && cat ~/transfer_log.txt
@@ -462,7 +500,7 @@ runs:
 
         exit 0
     - name: "Upload artifacts"
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      uses: chainguard-actions/actions-upload-artifact@f9571ddcfab0329c68a1e92a4b612bee5d8e5042 # v7
       with:
         name: "transfer_artifacts"
         path: |

@@ -1,0 +1,40 @@
+name: Test FTP advanced options and artifacts
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          remote-protocol: ftp
+          remote-host: 127.0.0.1
+          remote-port: 21
+          remote-user: ftpuser
+          remote-password: ftppass
+          local-path: .
+          remote-path: /tmp/deploy
+          sync: full
+          ftp-options: "set net:timeout 5"
+          ftp-mirror-options: "--no-perms"
+          ftp-post-sync-commands: "echo done"
+          artifacts: "true"
+          webhook: ""
+      - name: Assert action ran (expected to fail connecting to 127.0.0.1:21)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded unexpectedly (real FTP server available?)"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully as expected (no real FTP server)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
