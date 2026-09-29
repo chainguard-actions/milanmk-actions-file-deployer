@@ -1,16 +1,18 @@
-name: Test sync-delta-excludes input
+name: Test delta sync with excludes
 on:
   workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      GITHUB_EVENT_NAME: push
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
-      - name: Run action with sync-delta-excludes
+      - name: Run action with sync-delta-excludes input
         id: action
         uses: .
         continue-on-error: true
@@ -21,17 +23,19 @@ jobs:
           remote-user: "testuser"
           remote-password: "testpass"
           local-path: "."
-          remote-path: "/tmp/deploy"
+          remote-path: "/upload"
           sync: "delta"
+          proxy: "false"
           sync-delta-excludes: "*.log *.tmp"
 
-      - name: Assert action ran (sync-delta-excludes input accepted)
+      - name: Assert action ran with sync-delta-excludes input
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
           echo "outcome: $OUTCOME"
-          # The action should fail at lftp connection (no real server),
-          # NOT at input validation. sync-delta-excludes is a valid input.
+          # The action will fail at lftp connection (no real server),
+          # but it must have accepted the sync-delta-excludes input
+          # and progressed past validation.
           if [ "$OUTCOME" = "failure" ] || [ "$OUTCOME" = "success" ]; then
             echo "PASS: action ran with sync-delta-excludes input (outcome=$OUTCOME)"
           else
