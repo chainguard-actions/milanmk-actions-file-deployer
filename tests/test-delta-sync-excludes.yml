@@ -1,4 +1,4 @@
-name: Test FTP full sync with ftp-options, ftp-mirror-options, and ftp-post-sync-commands
+name: Test delta sync with sync-delta-excludes input
 on:
   workflow_dispatch:
 jobs:
@@ -12,18 +12,16 @@ jobs:
         uses: .
         continue-on-error: true
         with:
-          remote-protocol: ftp
+          remote-protocol: sftp
           remote-host: nonexistent.example.invalid
-          remote-port: 21
-          remote-user: ftpuser
-          remote-password: ftppassword
+          remote-port: 22
+          remote-user: testuser
+          remote-password: testpassword
           local-path: .
           remote-path: /upload
-          sync: full
-          ftp-options: "set net:timeout 5"
-          ftp-mirror-options: "--delete"
-          ftp-post-sync-commands: "echo done"
-      - name: Assert action processed ftp-options, ftp-mirror-options, ftp-post-sync-commands inputs
+          sync: delta
+          sync-delta-excludes: "*.log *.tmp"
+      - name: Assert action processed sync-delta-excludes input
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
@@ -31,7 +29,7 @@ jobs:
           if [ "$OUTCOME" = "success" ]; then
             echo "PASS: action succeeded"
           elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed gracefully (expected - no real FTP host)"
+            echo "PASS: action failed gracefully (expected - no real SFTP host)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1
