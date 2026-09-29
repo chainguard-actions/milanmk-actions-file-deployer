@@ -1,4 +1,4 @@
-name: Test FTP full sync with ftp options
+name: Test SFTP with SSH private key and options
 on:
   workflow_dispatch:
 jobs:
@@ -12,17 +12,21 @@ jobs:
         uses: .
         continue-on-error: true
         with:
-          remote-protocol: ftp
+          remote-protocol: sftp
           remote-host: nonexistent.example.invalid
-          remote-port: 21
-          remote-user: ftpuser
-          remote-password: ftppass
+          remote-port: 22
+          remote-user: testuser
+          remote-password: testpass
+          ssh-private-key: |
+            -----BEGIN OPENSSH PRIVATE KEY-----
+            ZmFrZWtleWZvcnRlc3Rpbmcx
+            -----END OPENSSH PRIVATE KEY-----
+          ssh-options: "-o ConnectTimeout=5"
           local-path: .
           remote-path: /remote/path
-          sync: full
-          ftp-options: "set net:timeout 5"
-          ftp-mirror-options: "--verbose"
-          ftp-post-sync-commands: "echo done"
+          sync: delta
+          sync-delta-excludes: "*.log *.tmp"
+          artifacts: "true"
           debug: "false"
       - name: Assert action ran and failed gracefully at connection (not at input validation)
         env:

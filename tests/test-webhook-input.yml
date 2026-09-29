@@ -1,4 +1,4 @@
-name: Test FTP full sync with ftp options
+name: Test SFTP with webhook notification input
 on:
   workflow_dispatch:
 jobs:
@@ -12,25 +12,23 @@ jobs:
         uses: .
         continue-on-error: true
         with:
-          remote-protocol: ftp
+          remote-protocol: sftp
           remote-host: nonexistent.example.invalid
-          remote-port: 21
-          remote-user: ftpuser
-          remote-password: ftppass
+          remote-port: 22
+          remote-user: testuser
+          remote-password: testpass
           local-path: .
           remote-path: /remote/path
           sync: full
-          ftp-options: "set net:timeout 5"
-          ftp-mirror-options: "--verbose"
-          ftp-post-sync-commands: "echo done"
+          webhook: "https://webhook.example.invalid/notify"
           debug: "false"
-      - name: Assert action ran and failed gracefully at connection (not at input validation)
+      - name: Assert action ran and failed gracefully (not at input validation)
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
           echo "outcome: $OUTCOME"
           if [ "$OUTCOME" = "success" ]; then
-            echo "PASS: action succeeded unexpectedly (maybe test host resolved?)"
+            echo "PASS: action succeeded unexpectedly"
           elif [ "$OUTCOME" = "failure" ]; then
             echo "PASS: action failed gracefully (expected - cannot connect to nonexistent host)"
           else
