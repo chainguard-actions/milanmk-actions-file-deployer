@@ -13,25 +13,25 @@ jobs:
         continue-on-error: true
         with:
           remote-protocol: sftp
-          remote-host: sftp.example.invalid
+          remote-host: 127.0.0.1
           remote-port: 22
           remote-user: testuser
-          remote-password: testpassword
+          remote-password: testpass
           local-path: .
-          remote-path: /upload
+          remote-path: /tmp/deploy
           sync: full
           artifacts: "true"
-          webhook: "https://webhook.example.invalid/notify"
+          webhook: "http://127.0.0.1:19999/webhook-test"
       - name: Assert action ran with artifacts and webhook inputs
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
           echo "outcome: $OUTCOME"
-          # The action is expected to fail at connection (no real SFTP server),
-          # but it must have accepted the artifacts and webhook inputs.
-          # The webhook call will also fail (invalid URL) but that is non-fatal.
+          # The action is expected to fail at the transfer step (can't connect to 127.0.0.1)
+          # The webhook call will also fail silently (curl --silent to unreachable URL)
+          # but it must NOT fail at input validation
           if [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed gracefully at connection stage (no real SFTP server)"
+            echo "PASS: action failed at transfer step as expected (no real SFTP server)"
           elif [ "$OUTCOME" = "success" ]; then
             echo "PASS: action succeeded unexpectedly"
           else

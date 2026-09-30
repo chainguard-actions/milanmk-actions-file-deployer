@@ -10,45 +10,77 @@
 
 **Harden Agent Version:** `2`
 
-Action **milanmk--actions-file-deployer/1.17** was hardened automatically. 54 finding(s) were identified and resolved across 3 iteration(s).
+Action **milanmk--actions-file-deployer/1.17** was hardened automatically. 54 finding(s) were identified and resolved across 5 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-The 'Deploy' run: block in action.yml directly interpolates ${{ }} expressions into shell commands (sub-rule a) and assigns them to unquoted shell variables (sub-rule b), enabling script injection. Critical instances include:
+The composite action's single `run:` block directly interpolates dozens of `${{ }}` expressions into shell commands (rule a), allowing an attacker to inject arbitrary shell commands. Affected expressions include attacker-controllable inputs and github context values:
 
-(a) Direct interpolation:
-- `--arg message "${{ github.event.head_commit.message }}"` — attacker-controlled commit message injected into jq args
-- `curl ... "${{inputs.webhook}}"` — user-controlled URL injected into curl
-- `local_path_unslash=$(echo "${{inputs.local-path}}" | sed ...)` — inputs injected into subshell
-- `remote_path_unslash=$(realpath --canonicalize-missing '${{inputs.remote-path}}')` — inputs injected into command
-- `input_remote_password="${{inputs.remote-password}}"` — password injected directly
-- `echo "${{inputs.ssh-private-key}}" > ${key_ssh}` — private key injected
-- `echo "set sftp:connect-program /usr/bin/ssh -a -x ... ${{inputs.ssh-options}}" >> ~/.lftprc` — options injected into config
-- `ssh -A -D ${{inputs.proxy-forwarding-port}} -f -N -p ${{inputs.proxy-port}} -i ~/proxy_private_key ${{inputs.proxy-user}}@${{inputs.proxy-host}}` — multiple inputs injected unquoted into SSH command
-- `${{inputs.ftp-post-sync-commands}}` injected directly into lftp -c command string — enables arbitrary lftp command injection
-- `${{inputs.ftp-mirror-options}}` injected into lftp -c command string
-- `cat ${{github.event_path}}` — github context injected into cat command
+• `${{inputs.webhook}}` — used as a curl URL and in a conditional (lines ~76, ~79)
+• `${{inputs.local-path}}` — passed to `echo … | sed` (line ~88)
+• `${{inputs.remote-path}}` — passed unquoted to `realpath` (line ~90)
+• `${{inputs.remote-password}}` — interpolated directly into shell variable assignment (line ~93)
+• `${{inputs.proxy}}` — interpolated directly (line ~97)
+• `${{inputs.sync}}` — assigned unquoted: `input_sync=${{inputs.sync}}` (line ~103)
+• `${{inputs.sync-delta-includes}}` — assigned unquoted: `input_sync_delta_includes=${{inputs.sync-delta-includes}}` (line ~107)
+• `${{inputs.remote-protocol}}` — used in conditionals and echo (lines ~110, ~148, ~155)
+• `${{inputs.debug}}` — used in conditionals throughout (lines ~116, ~127, ~133, etc.)
+• `${{github.event_name}}` — used in conditionals (lines ~104, ~106, ~200, ~207, ~211)
+• `${{github.event.inputs.sync}}` — interpolated directly (line ~105)
+• `${{github.event_path}}` — passed to `cat` (line ~128)
+• `${{inputs.remote-host}}`, `${{inputs.remote-user}}` — written into ~/.netrc and ~/.lftprc (lines ~149, ~172)
+• `${{inputs.ssh-private-key}}`, `${{inputs.proxy-private-key}}` — written to key files (lines ~155, ~162)
+• `${{inputs.proxy-forwarding-port}}` — passed directly to `ssh -D` and `socks5` config (lines ~166, ~220)
+• `${{inputs.ftp-options}}` — interpolated into ~/.lftprc content (line ~183)
+• `${{inputs.ssh-options}}` — appended to sftp:connect-program line (lines ~186, ~188)
+• `${{inputs.proxy-user}}`, `${{inputs.proxy-host}}`, `${{inputs.proxy-port}}` — passed directly to `ssh` command (line ~220)
+• `${{github.event.before}}`, `${{github.event.pull_request.base.sha}}` — assigned unquoted to shell variable (lines ~207, ~209)
+• `${{github.sha}}` — used in git commands and echo (lines ~212, ~228, ~237)
+• `${{inputs.sync-delta-excludes}}` — passed directly to `git diff` (lines ~241, ~242)
+• `${{inputs.ftp-mirror-options}}` — interpolated into lftp -c command string (line ~285)
+• `${{inputs.ftp-post-sync-commands}}` — interpolated into lftp -c command string (lines ~287, ~296)
+• `${{inputs.artifacts}}` — used in conditionals (lines ~252, ~307)
+• `${{github.event.head_commit.message}}` — interpolated into echo (lines ~72, ~228)
+• `${{github.actor}}`, `${{github.repository}}`, `${{github.ref}}`, `${{github.workflow}}`, `${{github.job}}`, `${{github.run_id}}` — interpolated into jq args and echo (lines ~65–75, ~228)
 
-(b) Unquoted variable assignments from expressions:
-- `input_sync=${{inputs.sync}}` — unquoted assignment
-- `input_sync=${{github.event.inputs.sync}}` — unquoted assignment
-- `input_sync_delta_includes=${{inputs.sync-delta-includes}}` — unquoted assignment
-- `git_previous_commit=${{github.event.before}}` — unquoted assignment
-- `git_previous_commit=${{github.event.pull_request.base.sha}}` — unquoted assignment
+All of these allow shell metacharacter injection since the values are substituted by the Actions runner before the shell ever sees the script.
 
 Locations:
 
+- `action.yml:65`
+- `action.yml:76`
 - `action.yml:79`
+- `action.yml:88`
+- `action.yml:90`
+- `action.yml:93`
+- `action.yml:97`
+- `action.yml:103`
+- `action.yml:105`
+- `action.yml:107`
+- `action.yml:110`
+- `action.yml:128`
+- `action.yml:148`
+- `action.yml:155`
+- `action.yml:162`
+- `action.yml:166`
+- `action.yml:183`
+- `action.yml:186`
+- `action.yml:220`
+- `action.yml:228`
+- `action.yml:241`
+- `action.yml:285`
+- `action.yml:287`
+- `action.yml:296`
 
 ### unpinned-uses (severity: high)
 
-The composite action step 'Upload artifacts' uses actions/upload-artifact@v4, which is pinned to a mutable tag (@v4) rather than a full 40-character commit SHA. This is vulnerable to supply-chain attacks if the tag is moved to a different commit. It should be pinned to a specific SHA, e.g., actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.
+The `Upload artifacts` step uses `actions/upload-artifact@v4`, which is pinned to a mutable version tag rather than an immutable 40-character commit SHA. A tag can be moved to point to a different (potentially malicious) commit at any time, enabling a supply-chain attack. It should be pinned to a full SHA, e.g. `actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4`.
 
 Locations:
 
-- `action.yml:261`
+- `action.yml:316`
 
 ### static-inline-injection (severity: high)
 
@@ -474,7 +506,8 @@ Locations:
 
 **Notes:**
 
-Rewrote action.yml to fix all findings: (1) Moved all 39 ${{ }} expressions from the 'Deploy' run: block into a step-level env: block, covering all inputs (remote-protocol, remote-host, remote-port, remote-user, remote-password, ssh-private-key, proxy, proxy-host, proxy-port, proxy-forwarding-port, proxy-user, proxy-private-key, local-path, remote-path, sync, sync-delta-excludes, sync-delta-includes, ssh-options, ftp-options, ftp-mirror-options, ftp-post-sync-commands, webhook, artifacts, debug) and all github context values (repository, workflow, job, run_id, ref, event_name, actor, event.head_commit.message, sha, event.before, event.pull_request.base.sha, event.inputs.sync, event_path, toJSON(env), toJSON(inputs)). All shell references now use $VAR_NAME syntax. (2) Pinned actions/upload-artifact@v4 to full SHA ea165f8d65b6e75b540449e92b4886f43607fa02 with # v4 comment.
+1. Moved all ${{ inputs.* }} and ${{ github.* }} expressions from the run: block to the step's env: block in the Deploy step. All 39 expressions (inputs.webhook, inputs.local-path, inputs.remote-path, inputs.remote-password, inputs.proxy, inputs.sync, inputs.sync-delta-includes, inputs.sync-delta-excludes, inputs.remote-protocol, inputs.remote-host, inputs.remote-user, inputs.remote-port, inputs.ssh-private-key, inputs.proxy-private-key, inputs.proxy-forwarding-port, inputs.proxy-user, inputs.proxy-host, inputs.proxy-port, inputs.ssh-options, inputs.ftp-options, inputs.ftp-mirror-options, inputs.ftp-post-sync-commands, inputs.artifacts, inputs.debug, github.repository, github.workflow, github.job, github.run_id, github.ref, github.event_name, github.actor, github.event.head_commit.message, github.sha, github.event_path, github.event.before, github.event.pull_request.base.sha, github.event.inputs.sync, toJSON(env), toJSON(inputs)) are now in the env: block. The run: block references only plain $VAR_NAME environment variables.
+2. Pinned actions/upload-artifact@v4 to immutable SHA ea165f8d65b6e75b540449e92b4886f43607fa02 with # v4 comment.
 
 ### Iteration 2
 
@@ -482,15 +515,12 @@ Rewrote action.yml to fix all findings: (1) Moved all 39 ${{ }} expressions from
 
 **Notes:**
 
-Fixed all four script-injection issues in action.yml:
-
-1. $INPUT_SSH_OPTIONS (lines 196/198): Tokenized with xargs into ssh_opts array using guard+xargs+read-loop pattern. Each element printed separately with `printf ' %s'` to ~/.lftprc, preventing shell metacharacter injection.
-
-2. $INPUT_SYNC_DELTA_EXCLUDES (lines 254/255): Tokenized with xargs into sync_excludes array. Expanded as "${sync_excludes[@]}" in git diff and git diff-tree commands to preserve argument boundaries.
-
-3. ${ftp_mirror_opts}/${ftp_post_cmds} (lines 288/291/293/300/303): Both tokenized with xargs into arrays (ftp_mirror_opts_arr, ftp_post_cmds_arr). lftp commands now written to a mktemp file using printf statements, and lftp invoked with -f flag instead of -c with a double-quoted string, eliminating shell expansion of user-controlled values.
-
-4. ${proxy_cmd} (multiple locations): Changed from string variable to bash array (proxy_cmd=() or proxy_cmd=(proxychains)). All usages updated to "${proxy_cmd[@]}" which correctly expands to zero words when empty.
+Fixed 5 unquoted variable expansions in the Deploy step's run script:
+1. $INPUT_FTP_OPTIONS: Changed from unquoted at end of echo string to its own double-quoted argument: '"$INPUT_FTP_OPTIONS"'
+2. $INPUT_SSH_OPTIONS (2 occurrences): Changed from unquoted inside echo strings to properly double-quoted using adjacent string concatenation: '""$INPUT_SSH_OPTIONS"'
+3. $INPUT_SYNC_DELTA_EXCLUDES (2 occurrences): Changed from unquoted trailing argument in git diff/diff-tree commands to '"$INPUT_SYNC_DELTA_EXCLUDES"'
+4. $INPUT_FTP_MIRROR_OPTIONS: Changed from unquoted inside lftp -c string to properly double-quoted using adjacent string concatenation: '""$INPUT_FTP_MIRROR_OPTIONS""'
+5. $INPUT_FTP_POST_SYNC_COMMANDS (2 occurrences): Changed from unquoted at end of lftp -c strings to properly double-quoted using adjacent string concatenation: '""$INPUT_FTP_POST_SYNC_COMMANDS"'
 
 ### Iteration 3
 
@@ -498,10 +528,35 @@ Fixed all four script-injection issues in action.yml:
 
 **Notes:**
 
-Fixed all 5 script-injection vulnerabilities in action.yml:
-1. proxychains config (line ~218): Changed from unquoted $INPUT_PROXY_FORWARDING_PORT embedded in double-quoted string to printf 'socks5 127.0.0.1 %s\n' "$INPUT_PROXY_FORWARDING_PORT" with proper %s format specifier.
-2. git commands (lines ~280-282): Added quotes around "${git_previous_commit}" and "${local_path_unslash}" in git cat-file, git diff, and git diff-tree commands.
-3. for loop (line ~285): Replaced unquoted word-splitting `for i in ${input_sync_delta_includes//,/ }` with safe `IFS=',' read -ra sync_delta_includes_arr <<< "${input_sync_delta_includes}"` and proper array iteration.
-4. sed #e injection (lines ~290-291): Replaced the critical `sed --in-place --regexp-extended "s#(.*)#realpath --canonicalize-missing --relative-to=$local_path_unslash \1#e"` (which executed shell commands with unquoted user input) with a safe while-loop that calls realpath directly with properly quoted arguments.
-5. rsync command (line ~296): Added quotes around "$HOME/files_to_upload" and "${local_path_slash}".
+Fixed four script-injection vulnerabilities in action.yml:
+
+1. **$INPUT_PROXY_FORWARDING_PORT** (line ~183): Replaced multiline double-quoted echo with `printf '%s\n'` calls where each argument is individually quoted, preventing newline injection into the proxychains config.
+
+2. **$INPUT_FTP_OPTIONS** (line ~196): The echo string used `"$INPUT_FTP_OPTIONS"` where the leading `"` closed the outer double-quoted string, leaving the variable unquoted. Rewrote the entire lftprc creation block using `{ printf ...; } > ~/.lftprc` with all variables properly quoted.
+
+3. **$INPUT_SSH_OPTIONS** (lines ~211, 213): The pattern `""$INPUT_SSH_OPTIONS"` closed the outer double-quoted string. Replaced with `printf '%s %s\n' "set sftp:connect-program ..." "$INPUT_SSH_OPTIONS"` to keep the variable properly quoted.
+
+4. **$INPUT_FTP_MIRROR_OPTIONS** and **$INPUT_FTP_POST_SYNC_COMMANDS** (lines ~310, 313, 322): The `""$VAR""` patterns closed the outer double-quoted string in `lftp -c` commands. Replaced with a temp-file approach: write lftp commands to a mktemp file using `printf '%s\n'` with properly quoted variables, then execute with `lftp -f "$lftp_script"` instead of `lftp -c`.
+
+### Iteration 4
+
+**Fixes applied:** script-injection
+
+**Notes:**
+
+Fixed all script-injection vulnerabilities in action.yml:
+1. Quoted `$git_previous_commit` and `$local_path_unslash` in git diff/diff-tree commands to prevent word splitting and glob expansion.
+2. Replaced the critically dangerous `sed --regexp-extended 's#(.*)#realpath ... $local_path_unslash \1#e'` (which executes the replacement as a shell command via the #e flag) with a safe `while IFS= read -r filepath; do realpath --canonicalize-missing --relative-to="$local_path_unslash" "$filepath"; done` loop for both files_to_upload and files_to_delete.
+3. Replaced the unquoted `for i in ${input_sync_delta_includes//,/ }` loop with a safe `while IFS= read -r sync_include_item` loop using process substitution with `tr ',' '\n'` to split on commas without word splitting or glob expansion.
+4. Fixed unquoted `${proxy_cmd}` in apt-get install by using a bash array `apt_pkgs` that conditionally includes the proxy package.
+5. Fixed unquoted `${proxy_cmd}` in the proxy IP check command by using a bash array `proxy_run`.
+6. Fixed unquoted `${proxy_cmd}` in both lftp invocations (full sync and delta sync) by using a bash array `lftp_cmd` that conditionally prepends the proxy command.
+
+### Iteration 5
+
+**Fixes applied:** script-injection, hardcoded-credentials
+
+**Notes:**
+
+Fixed two issues in hardened/action/action.yml: (1) script-injection: Quoted the unquoted ${local_path_slash} variable in the rsync command (line ~253) as "${local_path_slash}" to prevent word-splitting and glob expansion on the attacker-controllable inputs.local-path value. (2) hardcoded-credentials: Removed the hardcoded 'dummypassword' fallback (lines ~162-164) — the input_remote_password variable now simply holds $INPUT_REMOTE_PASSWORD directly, using an empty string when no password is provided, eliminating the risk of unintended FTP authentication with a hardcoded credential.
 
