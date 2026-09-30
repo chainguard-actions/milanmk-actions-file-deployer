@@ -1,4 +1,4 @@
-name: Test proxy inputs coverage
+name: Test SFTP with SSH private key and options
 on:
   workflow_dispatch:
 jobs:
@@ -8,29 +8,35 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+      - name: Create a second commit so delta sync has history
+        run: |
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          echo "test" > /tmp/dummy_file_for_delta.txt
+          cp /tmp/dummy_file_for_delta.txt "$GITHUB_WORKSPACE/dummy_delta.txt"
+          git add "$GITHUB_WORKSPACE/dummy_delta.txt"
+          git commit -m "Add dummy file for delta test" || true
       - id: action
         uses: .
         continue-on-error: true
         with:
           remote-protocol: sftp
-          remote-host: 192.0.2.1
+          remote-host: 127.0.0.1
           remote-port: 22
           remote-user: testuser
-          remote-password: testpassword
-          proxy: "true"
-          proxy-host: 192.0.2.2
-          proxy-port: 22
-          proxy-forwarding-port: 1080
-          proxy-user: proxyuser
-          proxy-private-key: |
+          remote-password: testpass
+          ssh-private-key: |
             -----BEGIN OPENSSH PRIVATE KEY-----
             ZmFrZWtleWZvcnRlc3Rpbmcx
             -----END OPENSSH PRIVATE KEY-----
+          ssh-options: "-o ConnectTimeout=5"
+          sync: delta
+          sync-delta-excludes: "*.log *.tmp"
           local-path: .
-          remote-path: /remote/path
-          sync: full
+          remote-path: /tmp/deploy
+          artifacts: "true"
           debug: "false"
-      - name: Assert action ran (fails at proxy connection with fake host, but inputs were accepted)
+      - name: Assert action ran (connection expected to fail on fake host)
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
@@ -38,7 +44,7 @@ jobs:
           if [ "$OUTCOME" = "success" ]; then
             echo "PASS: action succeeded"
           elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed gracefully at proxy connection stage (expected with fake host)"
+            echo "PASS: action failed gracefully (fake host not reachable)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1

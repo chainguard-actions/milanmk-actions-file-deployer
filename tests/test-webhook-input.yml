@@ -1,4 +1,4 @@
-name: Test webhook input coverage
+name: Test webhook input
 on:
   workflow_dispatch:
 jobs:
@@ -13,16 +13,16 @@ jobs:
         continue-on-error: true
         with:
           remote-protocol: ftp
-          remote-host: 192.0.2.1
+          remote-host: 127.0.0.1
           remote-port: 21
-          remote-user: ftpuser
-          remote-password: ftppassword
-          local-path: .
-          remote-path: /remote/path
+          remote-user: testuser
+          remote-password: testpass
           sync: full
-          webhook: "https://192.0.2.255/webhook"
+          local-path: .
+          remote-path: /tmp/deploy
+          webhook: "http://127.0.0.1:19999/webhook"
           debug: "false"
-      - name: Assert action ran (fails gracefully on unreachable host/webhook)
+      - name: Assert action ran (connection expected to fail on fake host)
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
@@ -30,7 +30,7 @@ jobs:
           if [ "$OUTCOME" = "success" ]; then
             echo "PASS: action succeeded"
           elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed gracefully (unreachable host/webhook expected)"
+            echo "PASS: action failed gracefully (fake host not reachable)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1

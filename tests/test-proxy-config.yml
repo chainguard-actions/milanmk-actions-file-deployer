@@ -1,4 +1,4 @@
-name: Test proxy configuration with proxy-host, proxy-user, and proxy-private-key
+name: Test proxy configuration inputs
 on:
   workflow_dispatch:
 jobs:
@@ -13,23 +13,24 @@ jobs:
         continue-on-error: true
         with:
           remote-protocol: sftp
-          remote-host: nonexistent.example.invalid
+          remote-host: 127.0.0.1
           remote-port: 22
           remote-user: testuser
-          remote-password: testpassword
+          remote-password: testpass
           proxy: "true"
-          proxy-host: proxy.example.invalid
+          proxy-host: 192.0.2.1
           proxy-port: 22
           proxy-forwarding-port: 1080
           proxy-user: proxyuser
           proxy-private-key: |
             -----BEGIN OPENSSH PRIVATE KEY-----
-            dGVzdGtleQ==
+            ZmFrZXByb3h5a2V5Zm9ydGVzdGluZw==
             -----END OPENSSH PRIVATE KEY-----
-          local-path: .
-          remote-path: /upload
           sync: full
-      - name: Assert action processed proxy-host, proxy-user, proxy-private-key inputs
+          local-path: .
+          remote-path: /tmp/deploy
+          debug: "false"
+      - name: Assert action ran (proxy connection expected to fail on fake host)
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
@@ -37,7 +38,7 @@ jobs:
           if [ "$OUTCOME" = "success" ]; then
             echo "PASS: action succeeded"
           elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed gracefully (expected - no real proxy host)"
+            echo "PASS: action failed gracefully (fake proxy host not reachable)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1

@@ -1,4 +1,4 @@
-name: Test FTP full sync with ftp-options, ftp-mirror-options, and ftp-post-sync-commands
+name: Test FTP full sync with ftp options
 on:
   workflow_dispatch:
 jobs:
@@ -13,17 +13,18 @@ jobs:
         continue-on-error: true
         with:
           remote-protocol: ftp
-          remote-host: nonexistent.example.invalid
+          remote-host: 127.0.0.1
           remote-port: 21
-          remote-user: ftpuser
-          remote-password: ftppassword
-          local-path: .
-          remote-path: /upload
+          remote-user: testuser
+          remote-password: testpass
           sync: full
+          local-path: .
+          remote-path: /tmp/deploy
           ftp-options: "set net:timeout 5"
-          ftp-mirror-options: "--delete"
+          ftp-mirror-options: "--verbose"
           ftp-post-sync-commands: "echo done"
-      - name: Assert action processed ftp-options, ftp-mirror-options, ftp-post-sync-commands inputs
+          debug: "false"
+      - name: Assert action ran (connection expected to fail on fake host)
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
@@ -31,7 +32,7 @@ jobs:
           if [ "$OUTCOME" = "success" ]; then
             echo "PASS: action succeeded"
           elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed gracefully (expected - no real FTP host)"
+            echo "PASS: action failed gracefully (fake host not reachable)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1
