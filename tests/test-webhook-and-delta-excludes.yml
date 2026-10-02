@@ -1,4 +1,4 @@
-name: Test SFTP with SSH private key and options
+name: Test webhook and sync-delta-excludes inputs coverage
 on:
   workflow_dispatch:
 jobs:
@@ -16,27 +16,23 @@ jobs:
           remote-host: nonexistent.example.invalid
           remote-port: 22
           remote-user: testuser
-          remote-password: testpass
-          ssh-private-key: |
-            -----BEGIN OPENSSH PRIVATE KEY-----
-            ZmFrZWtleWZvcnRlc3Rpbmcx
-            -----END OPENSSH PRIVATE KEY-----
-          ssh-options: "-o ConnectTimeout=5"
+          remote-password: testpassword
           local-path: .
-          remote-path: /remote/path
+          remote-path: /upload
           sync: delta
           sync-delta-excludes: "*.log *.tmp"
-          artifacts: "true"
+          webhook: "https://webhook.example.invalid/notify"
+          artifacts: "false"
           debug: "false"
-      - name: Assert action ran and failed gracefully at connection (not at input validation)
+      - name: Assert action ran (fails gracefully on nonexistent host)
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
           echo "outcome: $OUTCOME"
           if [ "$OUTCOME" = "success" ]; then
-            echo "PASS: action succeeded unexpectedly (maybe test host resolved?)"
+            echo "PASS: action succeeded unexpectedly"
           elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed gracefully (expected - cannot connect to nonexistent host)"
+            echo "PASS: action failed gracefully on nonexistent remote host"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1
