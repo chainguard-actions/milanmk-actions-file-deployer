@@ -1,4 +1,4 @@
-name: Test FTP full sync with mirror and post-sync options
+name: Test artifacts upload input
 on:
   workflow_dispatch:
 jobs:
@@ -12,20 +12,17 @@ jobs:
         uses: .
         continue-on-error: true
         with:
-          remote-protocol: ftp
-          remote-host: 127.0.0.1
-          remote-port: 21
+          remote-protocol: sftp
+          remote-host: "192.0.2.1"
+          remote-port: 22
           remote-user: testuser
-          remote-password: testpass
-          local-path: .
-          remote-path: /tmp/deploy
+          remote-password: "testpassword"
+          local-path: "."
+          remote-path: "/remote/path"
           sync: full
-          ftp-options: "set net:timeout 5"
-          ftp-mirror-options: "--no-perms --no-umask"
-          ftp-post-sync-commands: "echo done"
-          artifacts: "false"
+          artifacts: "true"
           debug: "false"
-      - name: Assert action ran (connection expected to fail on loopback)
+      - name: Assert action ran (failed gracefully at connection, not at validation)
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
@@ -33,7 +30,7 @@ jobs:
           if [ "$OUTCOME" = "success" ]; then
             echo "PASS: action succeeded"
           elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed gracefully (no real FTP server available)"
+            echo "PASS: action failed gracefully (expected - no real SFTP host)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1

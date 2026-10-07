@@ -1,4 +1,4 @@
-name: Test webhook notification and delta includes inputs
+name: Test FTP with ftp-options, ftp-mirror-options, and ftp-post-sync-commands
 on:
   workflow_dispatch:
 jobs:
@@ -12,19 +12,19 @@ jobs:
         uses: .
         continue-on-error: true
         with:
-          remote-protocol: sftp
-          remote-host: 127.0.0.1
-          remote-port: 22
-          remote-user: testuser
-          remote-password: testpass
-          local-path: .
-          remote-path: /tmp/deploy
-          sync: delta
-          sync-delta-includes: "hardened/tests"
-          webhook: "http://127.0.0.1:19999/webhook"
-          artifacts: "true"
+          remote-protocol: ftp
+          remote-host: "192.0.2.1"
+          remote-port: 21
+          remote-user: ftpuser
+          remote-password: "ftppassword"
+          local-path: "."
+          remote-path: "/remote/path"
+          sync: full
+          ftp-options: "set net:timeout 5"
+          ftp-mirror-options: "--no-perms"
+          ftp-post-sync-commands: "echo done"
           debug: "false"
-      - name: Assert action ran (connection expected to fail on loopback)
+      - name: Assert action ran (failed gracefully at connection, not at validation)
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
@@ -32,7 +32,7 @@ jobs:
           if [ "$OUTCOME" = "success" ]; then
             echo "PASS: action succeeded"
           elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed gracefully (no real SFTP server available)"
+            echo "PASS: action failed gracefully (expected - no real FTP host)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1

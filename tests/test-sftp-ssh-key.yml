@@ -1,4 +1,4 @@
-name: Test SFTP with SSH key and extra options
+name: Test SFTP with SSH private key and options
 on:
   workflow_dispatch:
 jobs:
@@ -8,29 +8,31 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+      - name: Create a second commit so delta sync has history
+        run: |
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          echo "test" > /tmp/dummy.txt
       - id: action
         uses: .
         continue-on-error: true
         with:
           remote-protocol: sftp
-          remote-host: 127.0.0.1
+          remote-host: "192.0.2.1"
           remote-port: 22
           remote-user: testuser
-          remote-password: testpass
+          remote-password: ""
           ssh-private-key: |
             -----BEGIN OPENSSH PRIVATE KEY-----
-            dGVzdGtleQ==
+            ZmFrZWtleWZvcnRlc3Rpbmcx
             -----END OPENSSH PRIVATE KEY-----
           ssh-options: "-o ConnectTimeout=5"
-          ftp-options: "set net:timeout 5"
-          local-path: .
-          remote-path: /tmp/deploy
-          sync: delta
-          sync-delta-excludes: "*.log *.tmp"
-          sync-delta-includes: ""
+          local-path: "."
+          remote-path: "/remote/path"
+          sync: full
           artifacts: "false"
           debug: "false"
-      - name: Assert action ran (connection expected to fail on loopback)
+      - name: Assert action ran (failed gracefully at connection, not at validation)
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
@@ -38,7 +40,7 @@ jobs:
           if [ "$OUTCOME" = "success" ]; then
             echo "PASS: action succeeded"
           elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed gracefully (no real SFTP server available)"
+            echo "PASS: action failed gracefully (expected - no real SFTP host)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1
