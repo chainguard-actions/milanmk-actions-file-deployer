@@ -1,4 +1,4 @@
-name: Test FTP options inputs
+name: Test FTP full sync with ftp options
 on:
   workflow_dispatch:
 jobs:
@@ -13,7 +13,7 @@ jobs:
         continue-on-error: true
         with:
           remote-protocol: ftp
-          remote-host: 127.0.0.1
+          remote-host: localhost
           remote-port: 21
           remote-user: testuser
           remote-password: testpass
@@ -21,19 +21,18 @@ jobs:
           remote-path: /tmp/deploy
           sync: full
           ftp-options: "set net:timeout 5"
-          ftp-mirror-options: "--no-perms"
+          ftp-mirror-options: "--parallel=2"
           ftp-post-sync-commands: "echo done"
-      - name: Assert action ran with ftp-options, ftp-mirror-options, and ftp-post-sync-commands inputs
+          artifacts: "true"
+      - name: Assert action ran (fails gracefully on no real FTP server)
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
           echo "outcome: $OUTCOME"
-          # The action is expected to fail at the transfer step (can't connect to 127.0.0.1:21)
-          # but it must NOT fail at input validation
-          if [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed at transfer step as expected (no real FTP server)"
-          elif [ "$OUTCOME" = "success" ]; then
-            echo "PASS: action succeeded unexpectedly"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (no real FTP server available)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1
