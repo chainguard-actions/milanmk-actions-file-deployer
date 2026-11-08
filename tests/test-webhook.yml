@@ -1,0 +1,64 @@
+name: Test webhook start notification
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Start local webhook receiver
+        run: |
+          cat > /tmp/hook.py <<'EOF'
+          import http.server
+          class H(http.server.BaseHTTPRequestHandler):
+              def do_POST(self):
+                  n = int(self.headers.get('Content-Length', 0))
+                  body = self.rfile.read(n)
+                  with open('/tmp/webhook.log', 'ab') as f:
+                      f.write(body + b'\n')
+                  self.send_response(200)
+                  self.end_headers()
+                  self.wfile.write(b'ok')
+              def log_message(self, *a):
+                  pass
+          http.server.HTTPServer(('127.0.0.1', 8765), H).serve_forever()
+          EOF
+          nohup python3 /tmp/hook.py >/tmp/hook.out 2>&1 &
+          sleep 2
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          remote-protocol: "ftp"
+          remote-host: "127.0.0.1"
+          remote-port: "1"
+          remote-user: "testuser"
+          remote-password: "testpassword"
+          local-path: "."
+          remote-path: "/tmp/deploy"
+          sync: "full"
+          webhook: "http://127.0.0.1:8765/hook"
+      - name: Assert webhook received start event
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" != "failure" ] && [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+          cat /tmp/hook.out 2>/dev/null || true
+          if [ ! -f /tmp/webhook.log ]; then
+            echo "FAIL: webhook receiver got no requests"
+            exit 1
+          fi
+          cat /tmp/webhook.log
+          if ! grep -qE '"status": *"start"' /tmp/webhook.log; then
+            echo "FAIL: start event not received"
+            exit 1
+          fi
+          if ! grep -qE '"event_name": *"workflow_dispatch"' /tmp/webhook.log; then
+            echo "FAIL: event_name missing from payload"
+            exit 1
+          fi
+          echo "PASS"

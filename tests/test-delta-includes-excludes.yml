@@ -1,0 +1,59 @@
+name: Test delta sync with includes and excludes
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Create extra files to include
+        run: |
+          mkdir -p deploy-extra
+          echo "included" > deploy-extra/included.txt
+          echo "second" > deploy-extra/second.txt
+          echo "commit count: $(git rev-list --count --all)"
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          remote-protocol: "sftp"
+          remote-host: "127.0.0.1"
+          remote-port: "1"
+          remote-user: "testuser"
+          remote-password: "testpassword"
+          local-path: "."
+          remote-path: "/tmp/remote"
+          sync: "delta"
+          sync-delta-excludes: "':!*.yml' ':!*.yaml'"
+          sync-delta-includes: "deploy-extra"
+      - name: Assert file lists
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" != "failure" ] && [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+          if [ "$(git rev-list --count --all)" -le 1 ]; then
+            echo "PASS: single-commit history, delta sync cannot compute a base (skipping list checks)"
+            exit 0
+          fi
+          if [ ! -f ~/files_to_upload ]; then
+            echo "FAIL: ~/files_to_upload not created"
+            exit 1
+          fi
+          echo "--- files_to_upload"; cat ~/files_to_upload
+          for f in deploy-extra/included.txt deploy-extra/second.txt; do
+            if ! grep -qx "$f" ~/files_to_upload; then
+              echo "FAIL: included file $f missing from upload list"
+              exit 1
+            fi
+          done
+          if grep -E '\.ya?ml$' ~/files_to_upload; then
+            echo "FAIL: excluded yml/yaml files present in upload list"
+            exit 1
+          fi
+          echo "PASS"
