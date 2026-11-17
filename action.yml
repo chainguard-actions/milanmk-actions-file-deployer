@@ -216,6 +216,13 @@ runs:
 
         input_sync_delta_includes="${INPUT_SYNC_DELTA_INCLUDES}"
 
+        sync_delta_excludes=()
+        if [ -n "${INPUT_SYNC_DELTA_EXCLUDES}" ]; then
+          printf '%s' "${INPUT_SYNC_DELTA_EXCLUDES}" | xargs -r true >/dev/null   # fails on an unmatched quote
+          while IFS= read -r -d '' t; do sync_delta_excludes+=("$t"); done \
+            < <(printf '%s' "${INPUT_SYNC_DELTA_EXCLUDES}" | xargs -r sh -c 'printf "%s\0" "$@"' sh)
+        fi
+
         echo "Validate inputs"
 
         if [ "${INPUT_REMOTE_PROTOCOL}" != "sftp" ] && [ "${INPUT_REMOTE_PROTOCOL}" != "ftp" ]; then
@@ -273,13 +280,13 @@ runs:
 
         if [ "${INPUT_REMOTE_PROTOCOL}" == "sftp" ] && [ -n "${INPUT_SSH_PRIVATE_KEY}" ]; then
           key_ssh=~/ssh_private_key
-          echo "${INPUT_SSH_PRIVATE_KEY}" > ${key_ssh} && chmod 600 ${key_ssh} && echo "File created: ${key_ssh}" && show_hr
+          printf '%s\n' "${INPUT_SSH_PRIVATE_KEY}" > ${key_ssh} && chmod 600 ${key_ssh} && echo "File created: ${key_ssh}" && show_hr
         fi
 
         if [ "${input_proxy}" == "true" ]; then
           if [ -n "${INPUT_PROXY_PRIVATE_KEY}" ]; then
             key_proxy=~/proxy_private_key
-            echo "${INPUT_PROXY_PRIVATE_KEY}" > ${key_proxy} && chmod 600 ${key_proxy} && echo "File created: ${key_proxy}" && show_hr
+            printf '%s\n' "${INPUT_PROXY_PRIVATE_KEY}" > ${key_proxy} && chmod 600 ${key_proxy} && echo "File created: ${key_proxy}" && show_hr
 
             config_proxychains=~/.proxychains/proxychains.conf
             mkdir ~/.proxychains && echo "strict_chain
@@ -384,39 +391,32 @@ runs:
           # show_hr
 
           if git cat-file -t "${git_previous_commit}" &>/dev/null; then
-            delta_excludes=()
-            if [ -n "${INPUT_SYNC_DELTA_EXCLUDES}" ]; then
-              printf '%s' "${INPUT_SYNC_DELTA_EXCLUDES}" | xargs -r true >/dev/null   # fails on an unmatched quote
-              while IFS= read -r -d '' t; do delta_excludes+=("$t"); done \
-                < <(printf '%s' "${INPUT_SYNC_DELTA_EXCLUDES}" | xargs -r sh -c 'printf "%s\0" "$@"' sh)
-            fi
-
-            git diff --diff-filter=ACMRT --name-only "${git_previous_commit}..${GH_SHA}" -- "${local_path_unslash}" ':!/.git*' "${delta_excludes[@]}" > ~/files_to_upload
-            git diff-tree --diff-filter=D --name-only -t "${git_previous_commit}..${GH_SHA}" -- "${local_path_unslash}" ':!/.git*' "${delta_excludes[@]}" > ~/files_to_delete
+            git diff --diff-filter=ACMRT --name-only "${git_previous_commit}..${GH_SHA}" -- "${local_path_unslash}" ':!/.git*' "${sync_delta_excludes[@]}" > ~/files_to_upload
+            git diff-tree --diff-filter=D --name-only -t "${git_previous_commit}..${GH_SHA}" -- "${local_path_unslash}" ':!/.git*' "${sync_delta_excludes[@]}" > ~/files_to_delete
 
             if [ -n "${input_sync_delta_includes}" ]; then
-              delta_includes=()
-              read -r -d '' -a delta_includes <<< "${input_sync_delta_includes//,/ }" || true
-              for p in "${delta_includes[@]}"; do
-                # Expand glob patterns like the shell did, without word splitting or evaluation
-                matches=$(compgen -G "$p" || true)
-                if [ -z "$matches" ]; then
-                  matches="$p"
-                fi
-                while IFS= read -r i; do
-                  find "$i" -type f >> ~/files_to_upload
-                done <<< "$matches"
+              # Split on commas and whitespace, with glob expansion, exactly as upstream's unquoted loop did
+              # shellcheck disable=SC2206
+              sync_delta_includes=(${input_sync_delta_includes//,/ })
+              for i in "${sync_delta_includes[@]}"; do
+                find "$i" -type f >> ~/files_to_upload
               done
             fi
 
-            for list_file in ~/files_to_upload ~/files_to_delete; do
-              tmp_list="${list_file}.tmp"
-              : > "${tmp_list}"
-              while IFS= read -r f; do
-                realpath --canonicalize-missing --relative-to="${local_path_unslash}" "$f" >> "${tmp_list}"
-              done < "${list_file}"
-              mv "${tmp_list}" "${list_file}"
-            done
+            # Make paths relative to the local path without executing file names through a shell
+            function relativize_file_list() {
+              local list_file="$1"
+              local tmp_file
+              local f
+              tmp_file=$(mktemp)
+              while IFS= read -r f || [ -n "$f" ]; do
+                [ -n "$f" ] || continue
+                realpath --canonicalize-missing --relative-to="${local_path_unslash}" -- "$f"
+              done < "${list_file}" > "${tmp_file}"
+              mv -f "${tmp_file}" "${list_file}"
+            }
+            relativize_file_list ~/files_to_upload
+            relativize_file_list ~/files_to_delete
 
             echo "File created: ~/files_to_upload" && cat ~/files_to_upload && show_hr
             echo "File created: ~/files_to_delete" && cat ~/files_to_delete && show_hr
